@@ -37,8 +37,8 @@ router.post('/signup', async (req, res) => {
     const userId = uuidv4();
 
     await query(`
-      INSERT INTO profiles (id, email, phone, name, role, password_hash, created_at)
-      VALUES (@id, @email, @phone, @name, @role, @password_hash, GETUTCDATE())
+      INSERT INTO profiles (id, email, phone, name, role, password_hash, account_type, created_at)
+      VALUES (@id, @email, @phone, @name, @role, @password_hash, 'normal', GETUTCDATE())
     `, {
       id: userId,
       email: email || null,
