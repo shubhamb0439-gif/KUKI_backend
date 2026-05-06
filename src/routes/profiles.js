@@ -30,7 +30,7 @@ router.patch('/:id', authenticate, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const allowed = ['name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring', 'account_type', 'ads_enabled'];
+  const allowed = ['name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring', 'account_type', 'ads_enabled', 'profile_photo', 'currency', 'language_preference', 'subscription_plan', 'subscription_status', 'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added'];
   const updates = Object.keys(req.body)
     .filter(k => allowed.includes(k))
     .map(k => `${k} = @${k}`)
