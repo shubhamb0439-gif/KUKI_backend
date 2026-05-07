@@ -13,7 +13,8 @@ const ALLOWED_TABLES = [
   'otp_verifications', 'salary_adjustments', 'contract_payments',
   'qr_transactions', 'performance_ratings', 'employer_ratings',
   'friend_requests', 'account_links', 'payment_requests',
-  'plan_change_requests'
+  'plan_change_requests', 'wage_loans', 'wage_bonuses', 'wage_contracts',
+  'wage_statements', 'employee_ratings'
 ];
 
 function sanitizeTable(table) {

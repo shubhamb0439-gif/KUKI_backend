@@ -11,6 +11,8 @@ const wageRoutes = require('./routes/wages');
 const adminRoutes = require('./routes/admin');
 const messageRoutes = require('./routes/messages');
 const qrTransactionRoutes = require('./routes/qr-transactions');
+const queryRoutes = require('./routes/query');
+const rpcRoutes = require('./routes/rpc');
 
 const app = express();
 
@@ -38,6 +40,8 @@ app.use('/wages', wageRoutes);
 app.use('/admin', adminRoutes);
 app.use('/messages', messageRoutes);
 app.use('/qr-transactions', qrTransactionRoutes);
+app.use('/query', queryRoutes);
+app.use('/rpc', rpcRoutes);
 
 // Health check (Azure App Service uses this)
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
