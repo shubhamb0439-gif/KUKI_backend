@@ -219,6 +219,103 @@ CREATE TABLE otp_verifications (
   created_at DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
+-- ─── WAGE LOANS ──────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wage_loans')
+CREATE TABLE wage_loans (
+  id                   UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id          UNIQUEIDENTIFIER NULL,
+  employer_id          UNIQUEIDENTIFIER NULL,
+  amount               DECIMAL(10,2) NULL,
+  repayment_amount     DECIMAL(10,2) NULL,
+  repayment_frequency  NVARCHAR(50) NULL,
+  notes                NVARCHAR(MAX) NULL,
+  status               NVARCHAR(50) NULL DEFAULT 'active',
+  qr_code              NVARCHAR(MAX) NULL,
+  created_at           DATETIMEOFFSET DEFAULT GETUTCDATE()
+);
+
+-- ─── WAGE BONUSES ────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wage_bonuses')
+CREATE TABLE wage_bonuses (
+  id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id UNIQUEIDENTIFIER NULL,
+  employer_id UNIQUEIDENTIFIER NULL,
+  type        NVARCHAR(50) NULL,
+  amount      DECIMAL(10,2) NULL,
+  reason      NVARCHAR(MAX) NULL,
+  created_at  DATETIMEOFFSET DEFAULT GETUTCDATE()
+);
+
+-- ─── WAGE CONTRACTS ──────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wage_contracts')
+CREATE TABLE wage_contracts (
+  id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id  UNIQUEIDENTIFIER NULL,
+  employer_id  UNIQUEIDENTIFIER NULL,
+  amount       DECIMAL(10,2) NULL,
+  description  NVARCHAR(MAX) NULL,
+  payment_date DATE NULL,
+  created_at   DATETIMEOFFSET DEFAULT GETUTCDATE()
+);
+
+-- ─── WAGE STATEMENTS ─────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wage_statements')
+CREATE TABLE wage_statements (
+  id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id  UNIQUEIDENTIFIER NULL,
+  user_id      UNIQUEIDENTIFIER NULL,
+  employer_id  UNIQUEIDENTIFIER NULL,
+  type         NVARCHAR(50) NULL,
+  amount       DECIMAL(10,2) NULL,
+  description  NVARCHAR(MAX) NULL,
+  period_start DATE NULL,
+  period_end   DATE NULL,
+  details      NVARCHAR(MAX) NULL,
+  created_at   DATETIMEOFFSET DEFAULT GETUTCDATE()
+);
+
+-- ─── QR TRANSACTIONS ─────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'qr_transactions')
+CREATE TABLE qr_transactions (
+  id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id UNIQUEIDENTIFIER NULL,
+  employer_id UNIQUEIDENTIFIER NULL,
+  type        NVARCHAR(50) NULL,
+  amount      DECIMAL(10,2) NULL,
+  qr_code     NVARCHAR(500) NULL,
+  status      NVARCHAR(50) NULL DEFAULT 'pending',
+  metadata    NVARCHAR(MAX) NULL,
+  created_at  DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  CONSTRAINT uq_qr_transactions_qr_code UNIQUE (qr_code)
+);
+
+-- ─── PLAN CHANGE REQUESTS ────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'plan_change_requests')
+CREATE TABLE plan_change_requests (
+  id             UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  user_id        UNIQUEIDENTIFIER NULL,
+  current_plan   NVARCHAR(50) NULL,
+  requested_plan NVARCHAR(50) NULL,
+  reason         NVARCHAR(MAX) NULL,
+  status         NVARCHAR(50) NULL DEFAULT 'pending',
+  reviewed_at    DATETIMEOFFSET NULL,
+  reviewed_by    UNIQUEIDENTIFIER NULL,
+  created_at     DATETIMEOFFSET DEFAULT GETUTCDATE()
+);
+
+-- ─── EMPLOYEE RATINGS ────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employee_ratings')
+CREATE TABLE employee_ratings (
+  id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id UNIQUEIDENTIFIER NULL,
+  employer_id UNIQUEIDENTIFIER NULL,
+  rating      DECIMAL(3,1) NULL,
+  comment     NVARCHAR(MAX) NULL,
+  created_at  DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  updated_at  DATETIMEOFFSET NULL,
+  CONSTRAINT uq_employee_ratings UNIQUE (employee_id, employer_id)
+);
+
 -- ─── INDEXES (performance) ────────────────────────────────────
 CREATE INDEX idx_employees_employer ON employees(employer_id);
 CREATE INDEX idx_employees_user ON employees(user_id);

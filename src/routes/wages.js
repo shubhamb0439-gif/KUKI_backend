@@ -67,18 +67,12 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 
 // GET /wages/loans
 router.get('/loans', authenticate, async (req, res) => {
+  const { employee_id } = req.query;
   try {
-    let q = `
-      SELECT l.*, p.name AS employee_name
-      FROM employee_loans l
-      JOIN employees e ON l.employee_id = e.id
-      JOIN profiles p ON e.user_id = p.id
-      WHERE 1=1
-    `;
-    const params = {};
-    if (req.user.role === 'employer') { q += ' AND e.employer_id = @eid'; params.eid = req.user.id; }
-    else { q += ' AND e.user_id = @uid'; params.uid = req.user.id; }
-    q += ' ORDER BY l.created_at DESC';
+    let q = `SELECT * FROM wage_loans WHERE employer_id = @employer_id`;
+    const params = { employer_id: req.user.id };
+    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
+    q += ' ORDER BY created_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {
@@ -87,15 +81,27 @@ router.get('/loans', authenticate, async (req, res) => {
   }
 });
 
+// GET /wages/loans/:id
+router.get('/loans/:id', authenticate, async (req, res) => {
+  try {
+    const result = await query(`SELECT * FROM wage_loans WHERE id = @id`, { id: req.params.id });
+    if (!result.recordset.length) return res.status(404).json({ error: 'Loan not found' });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch loan' });
+  }
+});
+
 // POST /wages/loans
 router.post('/loans', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, amount, description } = req.body;
+  const { employee_id, amount, repayment_amount, repayment_frequency, notes, status, qr_code } = req.body;
   try {
     const id = uuidv4();
     await query(`
-      INSERT INTO employee_loans (id, employee_id, amount, description, status, created_at)
-      VALUES (@id, @employee_id, @amount, @description, 'active', GETUTCDATE())
-    `, { id, employee_id, amount, description: description || null });
+      INSERT INTO wage_loans (id, employee_id, employer_id, amount, repayment_amount, repayment_frequency, notes, status, qr_code, created_at)
+      VALUES (@id, @employee_id, @employer_id, @amount, @repayment_amount, @repayment_frequency, @notes, @status, @qr_code, GETUTCDATE())
+    `, { id, employee_id, employer_id: req.user.id, amount, repayment_amount: repayment_amount || null, repayment_frequency: repayment_frequency || null, notes: notes || null, status: status || 'active', qr_code: qr_code || null });
     res.status(201).json({ id });
   } catch (err) {
     console.error(err);
@@ -103,22 +109,38 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
   }
 });
 
+// PATCH /wages/loans/:id
+router.patch('/loans/:id', authenticate, requireEmployer, async (req, res) => {
+  const { amount, repayment_amount, repayment_frequency, notes, status, qr_code } = req.body;
+  try {
+    const result = await query(`
+      UPDATE wage_loans
+      SET amount = ISNULL(@amount, amount),
+          repayment_amount = ISNULL(@repayment_amount, repayment_amount),
+          repayment_frequency = ISNULL(@repayment_frequency, repayment_frequency),
+          notes = ISNULL(@notes, notes),
+          status = ISNULL(@status, status),
+          qr_code = ISNULL(@qr_code, qr_code)
+      OUTPUT INSERTED.*
+      WHERE id = @id
+    `, { id: req.params.id, amount: amount ?? null, repayment_amount: repayment_amount ?? null, repayment_frequency: repayment_frequency ?? null, notes: notes ?? null, status: status ?? null, qr_code: qr_code ?? null });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update loan' });
+  }
+});
+
 // ─── BONUSES ─────────────────────────────────────────────────────────────────
 
 // GET /wages/bonuses
 router.get('/bonuses', authenticate, async (req, res) => {
+  const { employee_id } = req.query;
   try {
-    let q = `
-      SELECT b.*, p.name AS employee_name
-      FROM employee_bonuses b
-      JOIN employees e ON b.employee_id = e.id
-      JOIN profiles p ON e.user_id = p.id
-      WHERE 1=1
-    `;
-    const params = {};
-    if (req.user.role === 'employer') { q += ' AND e.employer_id = @eid'; params.eid = req.user.id; }
-    else { q += ' AND e.user_id = @uid'; params.uid = req.user.id; }
-    q += ' ORDER BY b.created_at DESC';
+    let q = `SELECT * FROM wage_bonuses WHERE employer_id = @employer_id`;
+    const params = { employer_id: req.user.id };
+    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
+    q += ' ORDER BY created_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {
@@ -129,13 +151,13 @@ router.get('/bonuses', authenticate, async (req, res) => {
 
 // POST /wages/bonuses
 router.post('/bonuses', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, amount, description } = req.body;
+  const { employee_id, type, amount, reason } = req.body;
   try {
     const id = uuidv4();
     await query(`
-      INSERT INTO employee_bonuses (id, employee_id, amount, description, created_at)
-      VALUES (@id, @employee_id, @amount, @description, GETUTCDATE())
-    `, { id, employee_id, amount, description: description || null });
+      INSERT INTO wage_bonuses (id, employee_id, employer_id, type, amount, reason, created_at)
+      VALUES (@id, @employee_id, @employer_id, @type, @amount, @reason, GETUTCDATE())
+    `, { id, employee_id, employer_id: req.user.id, type: type || 'bonus', amount, reason: reason || null });
     res.status(201).json({ id });
   } catch (err) {
     console.error(err);
@@ -143,20 +165,71 @@ router.post('/bonuses', authenticate, requireEmployer, async (req, res) => {
   }
 });
 
+// ─── CONTRACTS ───────────────────────────────────────────────────────────────
+
+// GET /wages/contracts
+router.get('/contracts', authenticate, async (req, res) => {
+  const { employee_id } = req.query;
+  try {
+    let q = `SELECT * FROM wage_contracts WHERE employer_id = @employer_id`;
+    const params = { employer_id: req.user.id };
+    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
+    const result = await query(q, params);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch contracts' });
+  }
+});
+
+// POST /wages/contracts
+router.post('/contracts', authenticate, requireEmployer, async (req, res) => {
+  const { employee_id, amount, description, payment_date } = req.body;
+  try {
+    const id = uuidv4();
+    await query(`
+      INSERT INTO wage_contracts (id, employee_id, employer_id, amount, description, payment_date, created_at)
+      VALUES (@id, @employee_id, @employer_id, @amount, @description, @payment_date, GETUTCDATE())
+    `, { id, employee_id, employer_id: req.user.id, amount, description: description || null, payment_date: payment_date || null });
+    res.status(201).json({ id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create contract' });
+  }
+});
+
 // ─── STATEMENTS ──────────────────────────────────────────────────────────────
 
 // GET /wages/statements
 router.get('/statements', authenticate, async (req, res) => {
+  const { user_id, employee_id } = req.query;
   try {
-    let q = `SELECT s.* FROM statements s WHERE 1=1`;
-    const params = {};
-    if (req.user.role !== 'admin') { q += ' AND s.user_id = @uid'; params.uid = req.user.id; }
-    q += ' ORDER BY s.created_at DESC';
+    let q = `SELECT * FROM wage_statements WHERE employer_id = @employer_id`;
+    const params = { employer_id: req.user.id };
+    if (user_id) { q += ' AND user_id = @user_id'; params.user_id = user_id; }
+    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
+    q += ' ORDER BY created_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch statements' });
+  }
+});
+
+// POST /wages/statements
+router.post('/statements', authenticate, requireEmployer, async (req, res) => {
+  const { employee_id, user_id, type, amount, description, period_start, period_end, details } = req.body;
+  try {
+    const id = uuidv4();
+    await query(`
+      INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, description, period_start, period_end, details, created_at)
+      VALUES (@id, @employee_id, @user_id, @employer_id, @type, @amount, @description, @period_start, @period_end, @details, GETUTCDATE())
+    `, { id, employee_id, user_id: user_id || null, employer_id: req.user.id, type: type || null, amount, description: description || null, period_start: period_start || null, period_end: period_end || null, details: details ? JSON.stringify(details) : null });
+    res.status(201).json({ id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create statement' });
   }
 });
 

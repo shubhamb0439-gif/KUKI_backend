@@ -191,4 +191,92 @@ router.get('/login-logs', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+// ─── PLAN CHANGES ─────────────────────────────────────────────────────────────
+
+// GET /admin/plan-changes
+router.get('/plan-changes', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const result = await query(`SELECT * FROM plan_change_requests ORDER BY created_at DESC`);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch plan changes' });
+  }
+});
+
+// POST /admin/plan-changes
+router.post('/plan-changes', authenticate, async (req, res) => {
+  const { user_id, current_plan, requested_plan, reason } = req.body;
+  try {
+    const id = uuidv4();
+    await query(`
+      INSERT INTO plan_change_requests (id, user_id, current_plan, requested_plan, reason, status, created_at)
+      VALUES (@id, @user_id, @current_plan, @requested_plan, @reason, 'pending', GETUTCDATE())
+    `, { id, user_id, current_plan, requested_plan, reason: reason || null });
+    res.status(201).json({ id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to create plan change request' });
+  }
+});
+
+// PATCH /admin/plan-changes/:id
+router.patch('/plan-changes/:id', authenticate, requireAdmin, async (req, res) => {
+  const { status, reviewed_by } = req.body;
+  try {
+    const result = await query(`
+      UPDATE plan_change_requests
+      SET status = ISNULL(@status, status),
+          reviewed_at = GETUTCDATE(),
+          reviewed_by = ISNULL(@reviewed_by, reviewed_by)
+      OUTPUT INSERTED.*
+      WHERE id = @id
+    `, { id: req.params.id, status: status ?? null, reviewed_by: reviewed_by ?? null });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update plan change' });
+  }
+});
+
+// ─── RATINGS ──────────────────────────────────────────────────────────────────
+
+// GET /admin/ratings
+router.get('/ratings', authenticate, async (req, res) => {
+  const { employee_id, employer_id } = req.query;
+  try {
+    let q = `SELECT * FROM employee_ratings WHERE 1=1`;
+    const params = {};
+    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
+    if (employer_id) { q += ' AND employer_id = @employer_id'; params.employer_id = employer_id; }
+    const result = await query(q, params);
+    res.json(result.recordset);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch ratings' });
+  }
+});
+
+// POST /admin/ratings - upsert on (employee_id, employer_id)
+router.post('/ratings', authenticate, async (req, res) => {
+  const { employee_id, employer_id, rating, comment } = req.body;
+  try {
+    const id = uuidv4();
+    await query(`
+      MERGE employee_ratings AS target
+      USING (SELECT @employee_id AS employee_id, @employer_id AS employer_id) AS source
+        ON target.employee_id = source.employee_id AND target.employer_id = source.employer_id
+      WHEN MATCHED THEN
+        UPDATE SET rating = @rating, comment = @comment, updated_at = GETUTCDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (id, employee_id, employer_id, rating, comment, created_at)
+        VALUES (@id, @employee_id, @employer_id, @rating, @comment, GETUTCDATE());
+    `, { id, employee_id, employer_id, rating, comment: comment || null });
+    res.status(201).json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to upsert rating' });
+  }
+});
+
 module.exports = router;
