@@ -11,7 +11,7 @@ const router = express.Router();
 router.get('/', authenticate, async (req, res) => {
   try {
     const result = await query(`
-      SELECT m.*, 
+      SELECT m.*,
         sp.name AS sender_name, sp.profile_photo AS sender_photo,
         rp.name AS receiver_name
       FROM messages m
@@ -100,6 +100,52 @@ router.post('/jobs/:id/apply', authenticate, async (req, res) => {
     res.status(201).json({ id });
   } catch (err) {
     res.status(500).json({ error: 'Failed to apply' });
+  }
+});
+
+// ─── JOB APPLICATIONS ─────────────────────────────────────────────────────────
+
+// GET /messages/jobs/applications — employer sees applications for their postings
+router.get('/jobs/applications', authenticate, async (req, res) => {
+  try {
+    const result = await query(`
+      SELECT
+        ja.id, ja.job_id, ja.applicant_id, ja.status, ja.created_at,
+        p.name            AS applicant_name,
+        p.email           AS applicant_email,
+        p.phone           AS applicant_phone,
+        p.profession      AS applicant_profession,
+        p.profile_photo   AS applicant_profile_photo,
+        jp.title          AS job_title,
+        jp.description    AS job_description
+      FROM job_applications ja
+      JOIN profiles p     ON ja.applicant_id = p.id
+      JOIN job_postings jp ON ja.job_id = jp.id
+      WHERE jp.employer_id = @employer_id
+      ORDER BY ja.created_at DESC
+    `, { employer_id: req.user.id });
+    res.json(result.recordset);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch applications' });
+  }
+});
+
+// PATCH /messages/jobs/applications/:id — update status, return updated row
+router.patch('/jobs/applications/:id', authenticate, async (req, res) => {
+  const { status } = req.body;
+  try {
+    const result = await query(`
+      UPDATE job_applications
+      SET status = @status, updated_at = GETUTCDATE()
+      OUTPUT INSERTED.*
+      WHERE id = @id
+    `, { id: req.params.id, status });
+    if (!result.recordset.length) return res.status(404).json({ error: 'Application not found' });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to update application' });
   }
 });
 

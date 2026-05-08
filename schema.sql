@@ -1,9 +1,10 @@
 -- ============================================================
 -- Kuki App - Azure SQL Schema
--- Run this in Azure SQL Database (kuki-db-prod)
+-- Safe to re-run: all statements are idempotent
 -- ============================================================
 
 -- ─── PROFILES ────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'profiles')
 CREATE TABLE profiles (
   id                      UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   email                   NVARCHAR(255) UNIQUE NULL,
@@ -18,6 +19,8 @@ CREATE TABLE profiles (
   subscription_status     NVARCHAR(50) NULL DEFAULT 'inactive',
   subscription_expires_at DATETIMEOFFSET NULL,
   trial_ends_at           DATETIMEOFFSET NULL,
+  trial_used              BIT DEFAULT 0,
+  trial_started_at        DATETIMEOFFSET NULL,
   payment_method_added    BIT DEFAULT 0,
   max_employees           INT DEFAULT 3,
   can_track_attendance    BIT DEFAULT 0,
@@ -34,6 +37,7 @@ CREATE TABLE profiles (
 );
 
 -- ─── EMPLOYEES ───────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employees')
 CREATE TABLE employees (
   id              UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   user_id         UNIQUEIDENTIFIER NULL REFERENCES profiles(id) ON DELETE SET NULL,
@@ -52,22 +56,24 @@ CREATE TABLE employees (
 );
 
 -- ─── ATTENDANCE ───────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'attendance')
 CREATE TABLE attendance (
-  id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-  employee_id UNIQUEIDENTIFIER NOT NULL REFERENCES employees(id),
-  date        DATE NOT NULL,
-  clock_in    DATETIMEOFFSET NULL,
-  clock_out   DATETIMEOFFSET NULL,
+  id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id  UNIQUEIDENTIFIER NOT NULL REFERENCES employees(id),
+  date         DATE NOT NULL,
+  clock_in     DATETIMEOFFSET NULL,
+  clock_out    DATETIMEOFFSET NULL,
   hours_worked DECIMAL(8,2) NULL,
-  location    NVARCHAR(500) NULL,
-  qr_scan     BIT DEFAULT 0,
-  is_manual   BIT DEFAULT 0,
-  notes       NVARCHAR(MAX) NULL,
-  created_at  DATETIMEOFFSET DEFAULT GETUTCDATE(),
-  updated_at  DATETIMEOFFSET DEFAULT GETUTCDATE()
+  location     NVARCHAR(500) NULL,
+  qr_scan      BIT DEFAULT 0,
+  is_manual    BIT DEFAULT 0,
+  notes        NVARCHAR(MAX) NULL,
+  created_at   DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  updated_at   DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
 -- ─── WAGES ────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wages')
 CREATE TABLE wages (
   id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   employee_id  UNIQUEIDENTIFIER NOT NULL REFERENCES employees(id),
@@ -82,6 +88,7 @@ CREATE TABLE wages (
 );
 
 -- ─── LOANS ────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employee_loans')
 CREATE TABLE employee_loans (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   employee_id UNIQUEIDENTIFIER NOT NULL REFERENCES employees(id),
@@ -94,6 +101,7 @@ CREATE TABLE employee_loans (
 );
 
 -- ─── BONUSES ──────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employee_bonuses')
 CREATE TABLE employee_bonuses (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   employee_id UNIQUEIDENTIFIER NOT NULL REFERENCES employees(id),
@@ -103,16 +111,18 @@ CREATE TABLE employee_bonuses (
 );
 
 -- ─── STATEMENTS ───────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'statements')
 CREATE TABLE statements (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   user_id     UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
   employer_id UNIQUEIDENTIFIER NULL REFERENCES profiles(id),
   period      NVARCHAR(50) NULL,
-  data        NVARCHAR(MAX) NULL, -- JSON blob of statement data
+  data        NVARCHAR(MAX) NULL,
   created_at  DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
 -- ─── JOB ROLES ────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'job_roles')
 CREATE TABLE job_roles (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   name        NVARCHAR(255) NOT NULL,
@@ -123,6 +133,7 @@ CREATE TABLE job_roles (
 );
 
 -- ─── JOB POSTINGS ─────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'job_postings')
 CREATE TABLE job_postings (
   id              UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   employer_id     UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
@@ -138,6 +149,7 @@ CREATE TABLE job_postings (
 );
 
 -- ─── JOB APPLICATIONS ─────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'job_applications')
 CREATE TABLE job_applications (
   id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   job_id       UNIQUEIDENTIFIER NOT NULL REFERENCES job_postings(id),
@@ -149,6 +161,7 @@ CREATE TABLE job_applications (
 );
 
 -- ─── MESSAGES ─────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'messages')
 CREATE TABLE messages (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   sender_id   UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
@@ -159,6 +172,7 @@ CREATE TABLE messages (
 );
 
 -- ─── ADVERTISEMENTS ───────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'advertisements')
 CREATE TABLE advertisements (
   id               UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   title            NVARCHAR(255) NOT NULL,
@@ -172,18 +186,20 @@ CREATE TABLE advertisements (
   updated_at       DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ad_impressions')
 CREATE TABLE ad_impressions (
-  id         UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-  ad_id      UNIQUEIDENTIFIER NOT NULL REFERENCES advertisements(id),
-  user_id    UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
-  viewed_at  DATETIMEOFFSET DEFAULT GETUTCDATE()
+  id        UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  ad_id     UNIQUEIDENTIFIER NOT NULL REFERENCES advertisements(id),
+  user_id   UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
+  viewed_at DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
 -- ─── SUBSCRIPTION TRANSACTIONS ────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'subscription_transactions')
 CREATE TABLE subscription_transactions (
   id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   user_id     UNIQUEIDENTIFIER NOT NULL REFERENCES profiles(id),
-  plan        NVARCHAR(50) NOT NULL,
+  [plan]      NVARCHAR(50) NOT NULL,
   amount      DECIMAL(18,2) NOT NULL,
   currency    NVARCHAR(10) DEFAULT 'USD',
   status      NVARCHAR(50) DEFAULT 'pending'
@@ -195,6 +211,7 @@ CREATE TABLE subscription_transactions (
 );
 
 -- ─── LOGIN LOGS ───────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'login_logs')
 CREATE TABLE login_logs (
   id           UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   user_id      UNIQUEIDENTIFIER NULL REFERENCES profiles(id) ON DELETE SET NULL,
@@ -208,7 +225,8 @@ CREATE TABLE login_logs (
   login_method NVARCHAR(50) NULL
 );
 
--- ─── OTP (for later when SMS is ready) ───────────────────────
+-- ─── OTP ─────────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'otp_verifications')
 CREATE TABLE otp_verifications (
   id         UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   phone      NVARCHAR(50) NOT NULL,
@@ -222,16 +240,24 @@ CREATE TABLE otp_verifications (
 -- ─── WAGE LOANS ──────────────────────────────────────────────
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'wage_loans')
 CREATE TABLE wage_loans (
-  id                   UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-  employee_id          UNIQUEIDENTIFIER NULL,
-  employer_id          UNIQUEIDENTIFIER NULL,
-  amount               DECIMAL(10,2) NULL,
-  repayment_amount     DECIMAL(10,2) NULL,
-  repayment_frequency  NVARCHAR(50) NULL,
-  notes                NVARCHAR(MAX) NULL,
-  status               NVARCHAR(50) NULL DEFAULT 'active',
-  qr_code              NVARCHAR(MAX) NULL,
-  created_at           DATETIMEOFFSET DEFAULT GETUTCDATE()
+  id                  UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id         UNIQUEIDENTIFIER NULL,
+  employer_id         UNIQUEIDENTIFIER NULL,
+  amount              DECIMAL(10,2) NULL,
+  interest_rate       DECIMAL(5,2) DEFAULT 0,
+  total_amount        DECIMAL(10,2) NULL,
+  remaining_amount    DECIMAL(10,2) NULL,
+  monthly_deduction   DECIMAL(10,2) NULL,
+  repayment_amount    DECIMAL(10,2) NULL,
+  repayment_frequency NVARCHAR(50) NULL,
+  currency            NVARCHAR(10) DEFAULT 'USD',
+  notes               NVARCHAR(MAX) NULL,
+  status              NVARCHAR(50) NULL DEFAULT 'active',
+  loan_date           DATETIMEOFFSET NULL,
+  paid_amount         DECIMAL(10,2) DEFAULT 0,
+  foreclosure_date    DATETIMEOFFSET NULL,
+  qr_code             NVARCHAR(MAX) NULL,
+  created_at          DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
 -- ─── WAGE BONUSES ────────────────────────────────────────────
@@ -241,8 +267,11 @@ CREATE TABLE wage_bonuses (
   employee_id UNIQUEIDENTIFIER NULL,
   employer_id UNIQUEIDENTIFIER NULL,
   type        NVARCHAR(50) NULL,
+  category    NVARCHAR(50) NULL,
   amount      DECIMAL(10,2) NULL,
+  currency    NVARCHAR(10) DEFAULT 'USD',
   reason      NVARCHAR(MAX) NULL,
+  comment     NVARCHAR(MAX) NULL,
   created_at  DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
@@ -253,6 +282,7 @@ CREATE TABLE wage_contracts (
   employee_id  UNIQUEIDENTIFIER NULL,
   employer_id  UNIQUEIDENTIFIER NULL,
   amount       DECIMAL(10,2) NULL,
+  currency     NVARCHAR(10) DEFAULT 'USD',
   description  NVARCHAR(MAX) NULL,
   payment_date DATE NULL,
   created_at   DATETIMEOFFSET DEFAULT GETUTCDATE()
@@ -271,21 +301,23 @@ CREATE TABLE wage_statements (
   period_start DATE NULL,
   period_end   DATE NULL,
   details      NVARCHAR(MAX) NULL,
+  message      NVARCHAR(MAX) NULL,
   created_at   DATETIMEOFFSET DEFAULT GETUTCDATE()
 );
 
 -- ─── QR TRANSACTIONS ─────────────────────────────────────────
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'qr_transactions')
 CREATE TABLE qr_transactions (
-  id          UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-  employee_id UNIQUEIDENTIFIER NULL,
-  employer_id UNIQUEIDENTIFIER NULL,
-  type        NVARCHAR(50) NULL,
-  amount      DECIMAL(10,2) NULL,
-  qr_code     NVARCHAR(500) NULL,
-  status      NVARCHAR(50) NULL DEFAULT 'pending',
-  metadata    NVARCHAR(MAX) NULL,
-  created_at  DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  id               UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id      UNIQUEIDENTIFIER NULL,
+  employer_id      UNIQUEIDENTIFIER NULL,
+  transaction_type NVARCHAR(50) NULL,
+  type             NVARCHAR(50) NULL,
+  amount           DECIMAL(10,2) NULL,
+  qr_code          NVARCHAR(500) NULL,
+  status           NVARCHAR(50) NULL DEFAULT 'pending',
+  metadata         NVARCHAR(MAX) NULL,
+  created_at       DATETIMEOFFSET DEFAULT GETUTCDATE(),
   CONSTRAINT uq_qr_transactions_qr_code UNIQUE (qr_code)
 );
 
@@ -316,13 +348,94 @@ CREATE TABLE employee_ratings (
   CONSTRAINT uq_employee_ratings UNIQUE (employee_id, employer_id)
 );
 
--- ─── INDEXES (performance) ────────────────────────────────────
-CREATE INDEX idx_employees_employer ON employees(employer_id);
-CREATE INDEX idx_employees_user ON employees(user_id);
-CREATE INDEX idx_attendance_employee ON attendance(employee_id);
-CREATE INDEX idx_attendance_date ON attendance(date);
-CREATE INDEX idx_wages_employee ON wages(employee_id);
-CREATE INDEX idx_messages_sender ON messages(sender_id);
-CREATE INDEX idx_messages_receiver ON messages(receiver_id);
-CREATE INDEX idx_login_logs_user ON login_logs(user_id);
-CREATE INDEX idx_ad_impressions_ad ON ad_impressions(ad_id);
+-- ─── EMPLOYEE WAGES ──────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'employee_wages')
+CREATE TABLE employee_wages (
+  id                    UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  employee_id           UNIQUEIDENTIFIER NULL,
+  employer_id           UNIQUEIDENTIFIER NULL,
+  monthly_wage          DECIMAL(10,2) DEFAULT 0,
+  currency              NVARCHAR(10) DEFAULT 'USD',
+  hourly_rate           DECIMAL(10,4) DEFAULT 0,
+  working_hours_per_day DECIMAL(5,1) DEFAULT 8,
+  total_working_days    INT DEFAULT 22,
+  actual_hours_worked   DECIMAL(8,1) DEFAULT 0,
+  final_payable         DECIMAL(10,2) DEFAULT 0,
+  merits                DECIMAL(10,2) DEFAULT 0,
+  demerits              DECIMAL(10,2) DEFAULT 0,
+  advances              DECIMAL(10,2) DEFAULT 0,
+  loan_deductions       DECIMAL(10,2) DEFAULT 0,
+  created_at            DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  updated_at            DATETIMEOFFSET DEFAULT GETUTCDATE(),
+  CONSTRAINT uq_employee_wages UNIQUE (employee_id, employer_id)
+);
+
+-- ─── ADD MISSING COLUMNS TO EXISTING TABLES ──────────────────
+
+-- profiles
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'trial_used')
+  ALTER TABLE profiles ADD trial_used BIT DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'trial_started_at')
+  ALTER TABLE profiles ADD trial_started_at DATETIMEOFFSET NULL;
+
+-- job_applications
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('job_applications') AND name = 'updated_at')
+  ALTER TABLE job_applications ADD updated_at DATETIMEOFFSET NULL;
+
+-- wage_loans
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'interest_rate')
+  ALTER TABLE wage_loans ADD interest_rate DECIMAL(5,2) DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'total_amount')
+  ALTER TABLE wage_loans ADD total_amount DECIMAL(10,2) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'remaining_amount')
+  ALTER TABLE wage_loans ADD remaining_amount DECIMAL(10,2) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'monthly_deduction')
+  ALTER TABLE wage_loans ADD monthly_deduction DECIMAL(10,2) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'currency')
+  ALTER TABLE wage_loans ADD currency NVARCHAR(10) DEFAULT 'USD';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'loan_date')
+  ALTER TABLE wage_loans ADD loan_date DATETIMEOFFSET NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'paid_amount')
+  ALTER TABLE wage_loans ADD paid_amount DECIMAL(10,2) DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_loans') AND name = 'foreclosure_date')
+  ALTER TABLE wage_loans ADD foreclosure_date DATETIMEOFFSET NULL;
+
+-- wage_bonuses
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_bonuses') AND name = 'category')
+  ALTER TABLE wage_bonuses ADD category NVARCHAR(50) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_bonuses') AND name = 'currency')
+  ALTER TABLE wage_bonuses ADD currency NVARCHAR(10) DEFAULT 'USD';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_bonuses') AND name = 'comment')
+  ALTER TABLE wage_bonuses ADD comment NVARCHAR(MAX) NULL;
+
+-- wage_contracts
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_contracts') AND name = 'currency')
+  ALTER TABLE wage_contracts ADD currency NVARCHAR(10) DEFAULT 'USD';
+
+-- wage_statements
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('wage_statements') AND name = 'message')
+  ALTER TABLE wage_statements ADD message NVARCHAR(MAX) NULL;
+
+-- qr_transactions
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('qr_transactions') AND name = 'transaction_type')
+  ALTER TABLE qr_transactions ADD transaction_type NVARCHAR(50) NULL;
+
+-- ─── INDEXES ─────────────────────────────────────────────────
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_employees_employer')
+  CREATE INDEX idx_employees_employer ON employees(employer_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_employees_user')
+  CREATE INDEX idx_employees_user ON employees(user_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_attendance_employee')
+  CREATE INDEX idx_attendance_employee ON attendance(employee_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_attendance_date')
+  CREATE INDEX idx_attendance_date ON attendance(date);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_wages_employee')
+  CREATE INDEX idx_wages_employee ON wages(employee_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_messages_sender')
+  CREATE INDEX idx_messages_sender ON messages(sender_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_messages_receiver')
+  CREATE INDEX idx_messages_receiver ON messages(receiver_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_login_logs_user')
+  CREATE INDEX idx_login_logs_user ON login_logs(user_id);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_ad_impressions_ad')
+  CREATE INDEX idx_ad_impressions_ad ON ad_impressions(ad_id);

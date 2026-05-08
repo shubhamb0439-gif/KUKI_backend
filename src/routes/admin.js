@@ -144,7 +144,7 @@ router.get('/ad-impressions', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-// POST /admin/ad-impressions - record a view
+// POST /admin/ad-impressions
 router.post('/ad-impressions', authenticate, async (req, res) => {
   const { ad_id } = req.body;
   try {
@@ -160,9 +160,18 @@ router.post('/ad-impressions', authenticate, async (req, res) => {
 
 // ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
 
+// GET /admin/subscriptions — return employer profiles with all subscription fields
 router.get('/subscriptions', authenticate, requireAdmin, async (req, res) => {
   try {
-    const result = await query("SELECT * FROM subscription_transactions ORDER BY created_at DESC");
+    const result = await query(`
+      SELECT id, name, email, phone, role, account_tier, subscription_plan, subscription_status,
+             subscription_expires_at, trial_ends_at, trial_used, trial_started_at,
+             max_employees, can_track_attendance, can_access_full_statements,
+             payment_method_added, created_at
+      FROM profiles
+      WHERE role = 'employer'
+      ORDER BY created_at DESC
+    `);
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch subscriptions' });
@@ -209,11 +218,12 @@ router.post('/plan-changes', authenticate, async (req, res) => {
   const { user_id, current_plan, requested_plan, reason } = req.body;
   try {
     const id = uuidv4();
-    await query(`
+    const result = await query(`
       INSERT INTO plan_change_requests (id, user_id, current_plan, requested_plan, reason, status, created_at)
+      OUTPUT INSERTED.*
       VALUES (@id, @user_id, @current_plan, @requested_plan, @reason, 'pending', GETUTCDATE())
     `, { id, user_id, current_plan, requested_plan, reason: reason || null });
-    res.status(201).json({ id });
+    res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to create plan change request' });
@@ -226,7 +236,7 @@ router.patch('/plan-changes/:id', authenticate, requireAdmin, async (req, res) =
   try {
     const result = await query(`
       UPDATE plan_change_requests
-      SET status = ISNULL(@status, status),
+      SET status      = ISNULL(@status, status),
           reviewed_at = GETUTCDATE(),
           reviewed_by = ISNULL(@reviewed_by, reviewed_by)
       OUTPUT INSERTED.*
@@ -257,7 +267,7 @@ router.get('/ratings', authenticate, async (req, res) => {
   }
 });
 
-// POST /admin/ratings - upsert on (employee_id, employer_id)
+// POST /admin/ratings — upsert on (employee_id, employer_id)
 router.post('/ratings', authenticate, async (req, res) => {
   const { employee_id, employer_id, rating, comment } = req.body;
   try {
@@ -269,7 +279,7 @@ router.post('/ratings', authenticate, async (req, res) => {
       WHEN MATCHED THEN
         UPDATE SET rating = @rating, comment = @comment, updated_at = GETUTCDATE()
       WHEN NOT MATCHED THEN
-        INSERT (id, employee_id, employer_id, rating, comment, created_at)
+        INSERT (id, employee_id, employer_id, rating, comment, updated_at)
         VALUES (@id, @employee_id, @employer_id, @rating, @comment, GETUTCDATE());
     `, { id, employee_id, employer_id, rating, comment: comment || null });
     res.status(201).json({ success: true });

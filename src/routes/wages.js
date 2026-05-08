@@ -32,19 +32,74 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// POST /wages - create wage record
+// POST /wages — UPSERT into employee_wages on (employee_id, employer_id)
 router.post('/', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, amount, period_start, period_end, status } = req.body;
+  const {
+    employee_id, monthly_wage, currency,
+    hourly_rate, working_hours_per_day, total_working_days,
+    actual_hours_worked, merits, demerits, advances, loan_deductions,
+  } = req.body;
+  const employer_id = req.user.id;
+  const id = uuidv4();
   try {
-    const id = uuidv4();
     await query(`
-      INSERT INTO wages (id, employee_id, amount, period_start, period_end, status, created_at)
-      VALUES (@id, @employee_id, @amount, @period_start, @period_end, @status, GETUTCDATE())
-    `, { id, employee_id, amount, period_start, period_end, status: status || 'pending' });
-    res.status(201).json({ id });
+      MERGE employee_wages AS target
+      USING (SELECT @employee_id AS employee_id, @employer_id AS employer_id) AS source
+        ON target.employee_id = source.employee_id AND target.employer_id = source.employer_id
+      WHEN MATCHED THEN
+        UPDATE SET
+          monthly_wage       = ISNULL(@monthly_wage, monthly_wage),
+          currency           = ISNULL(@currency, currency),
+          hourly_rate        = ISNULL(@hourly_rate, hourly_rate),
+          working_hours_per_day = ISNULL(@working_hours_per_day, working_hours_per_day),
+          total_working_days = ISNULL(@total_working_days, total_working_days),
+          actual_hours_worked= ISNULL(@actual_hours_worked, actual_hours_worked),
+          merits             = ISNULL(@merits, merits),
+          demerits           = ISNULL(@demerits, demerits),
+          advances           = ISNULL(@advances, advances),
+          loan_deductions    = ISNULL(@loan_deductions, loan_deductions),
+          updated_at         = GETUTCDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (id, employee_id, employer_id, monthly_wage, currency, hourly_rate,
+                working_hours_per_day, total_working_days, actual_hours_worked,
+                merits, demerits, advances, loan_deductions, created_at, updated_at)
+        VALUES (@id, @employee_id, @employer_id, ISNULL(@monthly_wage,0), ISNULL(@currency,'USD'),
+                ISNULL(@hourly_rate,0), ISNULL(@working_hours_per_day,8), ISNULL(@total_working_days,22),
+                ISNULL(@actual_hours_worked,0), ISNULL(@merits,0), ISNULL(@demerits,0),
+                ISNULL(@advances,0), ISNULL(@loan_deductions,0), GETUTCDATE(), GETUTCDATE());
+    `, {
+      id, employee_id, employer_id,
+      monthly_wage: monthly_wage ?? null,
+      currency: currency || null,
+      hourly_rate: hourly_rate ?? null,
+      working_hours_per_day: working_hours_per_day ?? null,
+      total_working_days: total_working_days ?? null,
+      actual_hours_worked: actual_hours_worked ?? null,
+      merits: merits ?? null,
+      demerits: demerits ?? null,
+      advances: advances ?? null,
+      loan_deductions: loan_deductions ?? null,
+    });
+
+    // Recalculate final_payable = monthly_wage + merits - demerits - advances - loan_deductions (min 0)
+    await query(`
+      UPDATE employee_wages
+      SET final_payable = CASE
+        WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - ISNULL(loan_deductions,0)) < 0
+          THEN 0
+          ELSE (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - ISNULL(loan_deductions,0))
+      END
+      WHERE employee_id = @employee_id AND employer_id = @employer_id
+    `, { employee_id, employer_id });
+
+    const result = await query(
+      `SELECT * FROM employee_wages WHERE employee_id = @employee_id AND employer_id = @employer_id`,
+      { employee_id, employer_id }
+    );
+    res.json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create wage record' });
+    res.status(500).json({ error: err.message || 'Failed to upsert wage record' });
   }
 });
 
@@ -95,39 +150,57 @@ router.get('/loans/:id', authenticate, async (req, res) => {
 
 // POST /wages/loans
 router.post('/loans', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, amount, repayment_amount, repayment_frequency, notes, status, qr_code } = req.body;
+  const {
+    employee_id, amount, interest_rate, total_amount, remaining_amount,
+    monthly_deduction, currency, status, loan_date, paid_amount,
+  } = req.body;
   try {
     const id = uuidv4();
-    await query(`
-      INSERT INTO wage_loans (id, employee_id, employer_id, amount, repayment_amount, repayment_frequency, notes, status, qr_code, created_at)
-      VALUES (@id, @employee_id, @employer_id, @amount, @repayment_amount, @repayment_frequency, @notes, @status, @qr_code, GETUTCDATE())
-    `, { id, employee_id, employer_id: req.user.id, amount, repayment_amount: repayment_amount || null, repayment_frequency: repayment_frequency || null, notes: notes || null, status: status || 'active', qr_code: qr_code || null });
-    res.status(201).json({ id });
+    const result = await query(`
+      INSERT INTO wage_loans (id, employee_id, employer_id, amount, interest_rate, total_amount,
+        remaining_amount, monthly_deduction, currency, status, loan_date, paid_amount, created_at)
+      OUTPUT INSERTED.*
+      VALUES (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
+        @remaining_amount, @monthly_deduction, @currency, @status, @loan_date, @paid_amount, GETUTCDATE())
+    `, {
+      id, employee_id, employer_id: req.user.id, amount,
+      interest_rate: interest_rate ?? 0,
+      total_amount: total_amount ?? null,
+      remaining_amount: remaining_amount ?? null,
+      monthly_deduction: monthly_deduction ?? null,
+      currency: currency || 'USD',
+      status: status || 'active',
+      loan_date: loan_date || null,
+      paid_amount: paid_amount ?? 0,
+    });
+    res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create loan' });
+    res.status(500).json({ error: err.message || 'Failed to create loan' });
   }
 });
 
-// PATCH /wages/loans/:id
+// PATCH /wages/loans/:id — dynamic update, return updated row
 router.patch('/loans/:id', authenticate, requireEmployer, async (req, res) => {
-  const { amount, repayment_amount, repayment_frequency, notes, status, qr_code } = req.body;
+  const ALLOWED = [
+    'amount', 'interest_rate', 'total_amount', 'remaining_amount', 'monthly_deduction',
+    'currency', 'status', 'loan_date', 'paid_amount', 'foreclosure_date',
+  ];
+  const keys = Object.keys(req.body).filter(k => ALLOWED.includes(k));
+  if (!keys.length) return res.status(400).json({ error: 'No valid fields to update' });
+
+  const params = { id: req.params.id };
+  const set = keys.map(k => { params[k] = req.body[k] ?? null; return `${k} = @${k}`; }).join(', ');
+
   try {
-    const result = await query(`
-      UPDATE wage_loans
-      SET amount = ISNULL(@amount, amount),
-          repayment_amount = ISNULL(@repayment_amount, repayment_amount),
-          repayment_frequency = ISNULL(@repayment_frequency, repayment_frequency),
-          notes = ISNULL(@notes, notes),
-          status = ISNULL(@status, status),
-          qr_code = ISNULL(@qr_code, qr_code)
-      OUTPUT INSERTED.*
-      WHERE id = @id
-    `, { id: req.params.id, amount: amount ?? null, repayment_amount: repayment_amount ?? null, repayment_frequency: repayment_frequency ?? null, notes: notes ?? null, status: status ?? null, qr_code: qr_code ?? null });
+    const result = await query(
+      `UPDATE wage_loans SET ${set} OUTPUT INSERTED.* WHERE id = @id`,
+      params
+    );
     res.json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to update loan' });
+    res.status(500).json({ error: err.message || 'Failed to update loan' });
   }
 });
 
@@ -149,19 +222,52 @@ router.get('/bonuses', authenticate, async (req, res) => {
   }
 });
 
-// POST /wages/bonuses
+// POST /wages/bonuses — insert and recalculate employee_wages.final_payable
 router.post('/bonuses', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, type, amount, reason } = req.body;
+  const { employee_id, type, category, amount, currency, comment } = req.body;
+  const employer_id = req.user.id;
   try {
     const id = uuidv4();
     await query(`
-      INSERT INTO wage_bonuses (id, employee_id, employer_id, type, amount, reason, created_at)
-      VALUES (@id, @employee_id, @employer_id, @type, @amount, @reason, GETUTCDATE())
-    `, { id, employee_id, employer_id: req.user.id, type: type || 'bonus', amount, reason: reason || null });
+      INSERT INTO wage_bonuses (id, employee_id, employer_id, type, category, amount, currency, comment, created_at)
+      VALUES (@id, @employee_id, @employer_id, @type, @category, @amount, @currency, @comment, GETUTCDATE())
+    `, {
+      id, employee_id, employer_id,
+      type: type || null,
+      category: category || 'bonus',
+      amount,
+      currency: currency || 'USD',
+      comment: comment || null,
+    });
+
+    // Recalculate totals in employee_wages from wage_bonuses
+    await query(`
+      UPDATE ew
+      SET
+        merits      = ISNULL(b.merit_total, 0),
+        demerits    = ISNULL(b.demerit_total, 0),
+        advances    = ISNULL(b.advance_total, 0),
+        final_payable = CASE
+          WHEN (ew.monthly_wage + ISNULL(b.merit_total,0) - ISNULL(b.demerit_total,0) - ISNULL(b.advance_total,0) - ISNULL(ew.loan_deductions,0)) < 0
+            THEN 0
+            ELSE (ew.monthly_wage + ISNULL(b.merit_total,0) - ISNULL(b.demerit_total,0) - ISNULL(b.advance_total,0) - ISNULL(ew.loan_deductions,0))
+        END
+      FROM employee_wages ew
+      CROSS APPLY (
+        SELECT
+          SUM(CASE WHEN category IN ('merit','bonus') THEN amount ELSE 0 END) AS merit_total,
+          SUM(CASE WHEN category = 'demerit'          THEN amount ELSE 0 END) AS demerit_total,
+          SUM(CASE WHEN category = 'advance'          THEN amount ELSE 0 END) AS advance_total
+        FROM wage_bonuses
+        WHERE employee_id = @employee_id AND employer_id = @employer_id
+      ) b
+      WHERE ew.employee_id = @employee_id AND ew.employer_id = @employer_id
+    `, { employee_id, employer_id });
+
     res.status(201).json({ id });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create bonus' });
+    res.status(500).json({ error: err.message || 'Failed to create bonus' });
   }
 });
 
@@ -184,17 +290,23 @@ router.get('/contracts', authenticate, async (req, res) => {
 
 // POST /wages/contracts
 router.post('/contracts', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, amount, description, payment_date } = req.body;
+  const { employee_id, amount, currency, description, payment_date } = req.body;
   try {
     const id = uuidv4();
-    await query(`
-      INSERT INTO wage_contracts (id, employee_id, employer_id, amount, description, payment_date, created_at)
-      VALUES (@id, @employee_id, @employer_id, @amount, @description, @payment_date, GETUTCDATE())
-    `, { id, employee_id, employer_id: req.user.id, amount, description: description || null, payment_date: payment_date || null });
-    res.status(201).json({ id });
+    const result = await query(`
+      INSERT INTO wage_contracts (id, employee_id, employer_id, amount, currency, description, payment_date, created_at)
+      OUTPUT INSERTED.*
+      VALUES (@id, @employee_id, @employer_id, @amount, @currency, @description, @payment_date, GETUTCDATE())
+    `, {
+      id, employee_id, employer_id: req.user.id, amount,
+      currency: currency || 'USD',
+      description: description || null,
+      payment_date: payment_date || null,
+    });
+    res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create contract' });
+    res.status(500).json({ error: err.message || 'Failed to create contract' });
   }
 });
 
@@ -219,17 +331,28 @@ router.get('/statements', authenticate, async (req, res) => {
 
 // POST /wages/statements
 router.post('/statements', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, user_id, type, amount, description, period_start, period_end, details } = req.body;
+  const { employee_id, user_id, type, amount, description, period_start, period_end, details, message } = req.body;
   try {
     const id = uuidv4();
-    await query(`
-      INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, description, period_start, period_end, details, created_at)
-      VALUES (@id, @employee_id, @user_id, @employer_id, @type, @amount, @description, @period_start, @period_end, @details, GETUTCDATE())
-    `, { id, employee_id, user_id: user_id || null, employer_id: req.user.id, type: type || null, amount, description: description || null, period_start: period_start || null, period_end: period_end || null, details: details ? JSON.stringify(details) : null });
-    res.status(201).json({ id });
+    const result = await query(`
+      INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, description,
+        period_start, period_end, details, message, created_at)
+      OUTPUT INSERTED.*
+      VALUES (@id, @employee_id, @user_id, @employer_id, @type, @amount, @description,
+        @period_start, @period_end, @details, @message, GETUTCDATE())
+    `, {
+      id, employee_id, user_id: user_id || null, employer_id: req.user.id,
+      type: type || null, amount,
+      description: description || null,
+      period_start: period_start || null,
+      period_end: period_end || null,
+      details: details ? JSON.stringify(details) : null,
+      message: message || null,
+    });
+    res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create statement' });
+    res.status(500).json({ error: err.message || 'Failed to create statement' });
   }
 });
 

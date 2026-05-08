@@ -9,17 +9,27 @@ const router = express.Router();
 
 // POST /qr-transactions
 router.post('/', authenticate, async (req, res) => {
-  const { employee_id, type, amount, qr_code, status, metadata } = req.body;
+  const { employee_id, transaction_type, amount, qr_code, status, metadata } = req.body;
   try {
     const id = uuidv4();
-    await query(`
-      INSERT INTO qr_transactions (id, employee_id, employer_id, type, amount, qr_code, status, metadata, created_at)
-      VALUES (@id, @employee_id, @employer_id, @type, @amount, @qr_code, @status, @metadata, GETUTCDATE())
-    `, { id, employee_id, employer_id: req.user.id, type, amount, qr_code: qr_code || null, status: status || 'pending', metadata: metadata ? JSON.stringify(metadata) : null });
-    res.status(201).json({ id });
+    const result = await query(`
+      INSERT INTO qr_transactions (id, employee_id, employer_id, transaction_type, amount, qr_code, status, metadata, created_at)
+      OUTPUT INSERTED.*
+      VALUES (@id, @employee_id, @employer_id, @transaction_type, @amount, @qr_code, @status, @metadata, GETUTCDATE())
+    `, {
+      id,
+      employee_id,
+      employer_id: req.user.id,
+      transaction_type: transaction_type || null,
+      amount,
+      qr_code: qr_code || null,
+      status: status || 'pending',
+      metadata: metadata ? JSON.stringify(metadata) : null,
+    });
+    res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create QR transaction' });
+    res.status(500).json({ error: err.message || 'Failed to create QR transaction' });
   }
 });
 
@@ -37,24 +47,27 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /qr-transactions/:id
+// PATCH /qr-transactions/:id — dynamic update, return updated row
 router.patch('/:id', authenticate, async (req, res) => {
-  const { type, amount, qr_code, status, metadata } = req.body;
+  const ALLOWED = ['transaction_type', 'amount', 'qr_code', 'status', 'metadata'];
+  const keys = Object.keys(req.body).filter(k => ALLOWED.includes(k));
+  if (!keys.length) return res.status(400).json({ error: 'No valid fields to update' });
+
+  const params = { id: req.params.id };
+  const set = keys.map(k => {
+    params[k] = k === 'metadata' ? (req.body[k] ? JSON.stringify(req.body[k]) : null) : (req.body[k] ?? null);
+    return `${k} = @${k}`;
+  }).join(', ');
+
   try {
-    const result = await query(`
-      UPDATE qr_transactions
-      SET type = ISNULL(@type, type),
-          amount = ISNULL(@amount, amount),
-          qr_code = ISNULL(@qr_code, qr_code),
-          status = ISNULL(@status, status),
-          metadata = ISNULL(@metadata, metadata)
-      OUTPUT INSERTED.*
-      WHERE id = @id
-    `, { id: req.params.id, type: type ?? null, amount: amount ?? null, qr_code: qr_code ?? null, status: status ?? null, metadata: metadata ? JSON.stringify(metadata) : null });
+    const result = await query(
+      `UPDATE qr_transactions SET ${set} OUTPUT INSERTED.* WHERE id = @id`,
+      params
+    );
     res.json(result.recordset[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to update QR transaction' });
+    res.status(500).json({ error: err.message || 'Failed to update QR transaction' });
   }
 });
 

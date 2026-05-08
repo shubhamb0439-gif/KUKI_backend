@@ -1,16 +1,34 @@
 const express = require('express');
 const { query } = require('../db');
 const { authenticate, requireAdmin } = require('../middleware/auth');
-const { uploadToBlob, deleteFromBlob } = require('../utils/storage');
+const { uploadToBlob } = require('../utils/storage');
 const multer = require('multer');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+const PROFILE_COLS = `id, name, email, phone, role, ads_enabled, subscription_plan, subscription_status,
+  subscription_expires_at, trial_ends_at, trial_used, trial_started_at, account_tier,
+  max_employees, can_track_attendance, can_access_full_statements, created_at`;
+
+// GET /profiles — admin gets all rows, anyone else gets their own row
+router.get('/', authenticate, async (req, res) => {
+  try {
+    if (req.user.role === 'admin') {
+      const result = await query(`SELECT ${PROFILE_COLS} FROM profiles ORDER BY created_at DESC`);
+      return res.json(result.recordset);
+    }
+    const result = await query(`SELECT ${PROFILE_COLS} FROM profiles WHERE id = @id`, { id: req.user.id });
+    res.json(result.recordset[0] || null);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch profiles' });
+  }
+});
+
 // GET /profiles/:id
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    // Users can only read their own profile unless admin
     if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Access denied' });
     }
@@ -30,7 +48,13 @@ router.patch('/:id', authenticate, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const allowed = ['name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring', 'account_type', 'account_tier', 'ads_enabled', 'profile_photo', 'currency', 'language_preference', 'subscription_plan', 'subscription_status', 'subscription_expires_at', 'trial_ends_at', 'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added'];
+  const allowed = [
+    'name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring',
+    'account_type', 'account_tier', 'ads_enabled', 'profile_photo', 'currency',
+    'language_preference', 'subscription_plan', 'subscription_status',
+    'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
+    'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
+  ];
   const updates = Object.keys(req.body)
     .filter(k => allowed.includes(k))
     .map(k => `${k} = @${k}`)
@@ -52,7 +76,7 @@ router.patch('/:id', authenticate, async (req, res) => {
   }
 });
 
-// POST /profiles/:id/photo - upload profile photo to Azure Blob Storage
+// POST /profiles/:id/photo
 router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res) => {
   if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied' });
@@ -62,7 +86,6 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
   try {
     const blobName = `${req.params.id}-${Date.now()}.jpg`;
     const url = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
-
     await query(
       'UPDATE profiles SET profile_photo = @url, updated_at = GETUTCDATE() WHERE id = @id',
       { url, id: req.params.id }
@@ -71,17 +94,6 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Photo upload failed' });
-  }
-});
-
-// GET /profiles (admin only - list all users)
-router.get('/', authenticate, requireAdmin, async (req, res) => {
-  try {
-    const result = await query('SELECT id, name, email, phone, role, ads_enabled, created_at FROM profiles ORDER BY created_at DESC');
-    res.json(result.recordset);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch users' });
   }
 });
 
