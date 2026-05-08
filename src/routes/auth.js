@@ -48,13 +48,17 @@ router.post('/signup', async (req, res) => {
       password_hash: hashedPassword,
     });
 
+    // Re-fetch from DB so the id is in the same format (uppercase UNIQUEIDENTIFIER) as login
+    const inserted = await query('SELECT * FROM profiles WHERE id = @id', { id: userId });
+    const { password_hash: _, ...newProfile } = inserted.recordset[0];
+
     const token = jwt.sign(
-      { id: userId, email, phone, name, role },
+      { id: newProfile.id, email: newProfile.email, phone: newProfile.phone, name: newProfile.name, role: newProfile.role },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
-    res.status(201).json({ token, user: { id: userId, email, phone, name, role } });
+    res.status(201).json({ token, user: newProfile });
   } catch (err) {
     console.error('Signup error:', err);
     res.status(500).json({ error: 'Failed to create account' });

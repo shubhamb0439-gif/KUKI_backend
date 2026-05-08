@@ -5,6 +5,21 @@ const { authenticate, requireEmployer } = require('../middleware/auth');
 
 const router = express.Router();
 
+function normalizeEmploymentType(val) {
+  const v = (val || '').toLowerCase().replace(/[-\s]/g, '_');
+  if (v.includes('part')) return 'part_time';
+  if (v.includes('contract')) return 'contract';
+  return 'full_time';
+}
+
+function normalizeWageType(val) {
+  const v = (val || '').toLowerCase();
+  if (v.includes('daily') || v.includes('day')) return 'daily';
+  if (v.includes('hour')) return 'hourly';
+  if (v.includes('contract')) return 'contract';
+  return 'monthly';
+}
+
 // GET /employees - employer gets their employees, employee gets their own record
 router.get('/', authenticate, async (req, res) => {
   try {
@@ -36,8 +51,11 @@ router.get('/', authenticate, async (req, res) => {
 router.post('/', authenticate, requireEmployer, async (req, res) => {
   const { user_id, name, phone, email, employment_type, wage_amount, wage_type, start_date } = req.body;
 
+  if (!user_id && !name) {
+    return res.status(400).json({ error: 'name is required when adding a new employee' });
+  }
+
   try {
-    // If user_id provided, link existing profile. Otherwise create manual entry.
     let employeeUserId = user_id;
 
     if (!employeeUserId) {
@@ -57,16 +75,16 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
       id: employeeId,
       user_id: employeeUserId,
       employer_id: req.user.id,
-      employment_type: employment_type || 'full_time',
+      employment_type: normalizeEmploymentType(employment_type),
       wage_amount: wage_amount || 0,
-      wage_type: wage_type || 'monthly',
+      wage_type: normalizeWageType(wage_type),
       start_date: start_date || null,
     });
 
     res.status(201).json({ id: employeeId, user_id: employeeUserId });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to add employee' });
+    res.status(500).json({ error: err.message || 'Failed to add employee' });
   }
 });
 

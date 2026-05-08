@@ -11,7 +11,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 router.get('/:id', authenticate, async (req, res) => {
   try {
     // Users can only read their own profile unless admin
-    if (req.params.id !== req.user.id && req.user.role !== 'admin') {
+    if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Access denied' });
     }
     const result = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
@@ -26,11 +26,11 @@ router.get('/:id', authenticate, async (req, res) => {
 
 // PATCH /profiles/:id
 router.patch('/:id', authenticate, async (req, res) => {
-  if (req.params.id !== req.user.id && req.user.role !== 'admin') {
+  if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  const allowed = ['name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring', 'account_type', 'ads_enabled', 'profile_photo', 'currency', 'language_preference', 'subscription_plan', 'subscription_status', 'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added'];
+  const allowed = ['name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring', 'account_type', 'account_tier', 'ads_enabled', 'profile_photo', 'currency', 'language_preference', 'subscription_plan', 'subscription_status', 'subscription_expires_at', 'trial_ends_at', 'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added'];
   const updates = Object.keys(req.body)
     .filter(k => allowed.includes(k))
     .map(k => `${k} = @${k}`)
@@ -54,7 +54,7 @@ router.patch('/:id', authenticate, async (req, res) => {
 
 // POST /profiles/:id/photo - upload profile photo to Azure Blob Storage
 router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res) => {
-  if (req.params.id !== req.user.id && req.user.role !== 'admin') {
+  if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied' });
   }
   if (!req.file) return res.status(400).json({ error: 'No file provided' });

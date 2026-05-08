@@ -32,8 +32,10 @@ router.get('/:table', authenticate, async (req, res) => {
     let conditions = [];
     let paramIndex = 0;
 
-    // Parse filters
+    // Parse filters (skip known non-filter keys)
+    const SKIP_KEYS = new Set(['select', 'order', 'limit', 'head', 'single']);
     Object.entries(req.query).forEach(([key, value]) => {
+      if (SKIP_KEYS.has(key)) return;
       if (key.startsWith('filter_')) {
         const col = key.replace('filter_', '');
         const paramName = `p${paramIndex++}`;
@@ -79,7 +81,7 @@ router.get('/:table', authenticate, async (req, res) => {
         .replace(/\s+/g, '')
         .split(',')
         .map(c => {
-          // Skip relation syntax
+          if (c === '*') return '*';
           if (c.includes('(') || c.includes('!')) return null;
           return `[${c}]`;
         })
