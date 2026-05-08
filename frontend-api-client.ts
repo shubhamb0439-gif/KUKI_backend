@@ -109,16 +109,33 @@ export const wages = {
   create: (data: Record<string, any>) => request<any>('POST', '/wages', data),
   update: (id: string, updates: Record<string, any>) => request<any>('PATCH', `/wages/${id}`, updates),
   loans: {
-    list: () => request<any[]>('GET', '/wages/loans'),
+    list: (employee_id?: string) => request<any[]>('GET', `/wages/loans${employee_id ? '?employee_id=' + employee_id : ''}`),
+    get: (id: string) => request<any>('GET', `/wages/loans/${id}`),
     create: (data: Record<string, any>) => request<any>('POST', '/wages/loans', data),
+    update: (id: string, updates: Record<string, any>) => request<any>('PATCH', `/wages/loans/${id}`, updates),
   },
   bonuses: {
-    list: () => request<any[]>('GET', '/wages/bonuses'),
+    list: (employee_id?: string) => request<any[]>('GET', `/wages/bonuses${employee_id ? '?employee_id=' + employee_id : ''}`),
     create: (data: Record<string, any>) => request<any>('POST', '/wages/bonuses', data),
   },
-  statements: {
-    list: () => request<any[]>('GET', '/wages/statements'),
+  contracts: {
+    list: (employee_id?: string) => request<any[]>('GET', `/wages/contracts${employee_id ? '?employee_id=' + employee_id : ''}`),
+    create: (data: Record<string, any>) => request<any>('POST', '/wages/contracts', data),
   },
+  statements: {
+    list: (filters?: { user_id?: string; employee_id?: string }) => {
+      const qs = filters ? '?' + new URLSearchParams(filters as any).toString() : '';
+      return request<any[]>('GET', `/wages/statements${qs}`);
+    },
+    create: (data: Record<string, any>) => request<any>('POST', '/wages/statements', data),
+  },
+};
+
+// ─── QR TRANSACTIONS ──────────────────────────────────────────────────────────
+export const qrTransactions = {
+  create: (data: Record<string, any>) => request<any>('POST', '/qr-transactions', data),
+  getByCode: (qr_code: string) => request<any>('GET', `/qr-transactions?qr_code=${encodeURIComponent(qr_code)}`),
+  update: (id: string, updates: Record<string, any>) => request<any>('PATCH', `/qr-transactions/${id}`, updates),
 };
 
 // ─── MESSAGES ─────────────────────────────────────────────────────────────────
@@ -155,4 +172,17 @@ export const admin = {
     approve: (id: string) => request<any>('PATCH', `/admin/subscriptions/${id}/approve`, {}),
   },
   loginLogs: () => request<any[]>('GET', '/admin/login-logs'),
+  planChanges: {
+    list: () => request<any[]>('GET', '/admin/plan-changes'),
+    create: (data: Record<string, any>) => request<any>('POST', '/admin/plan-changes', data),
+    review: (id: string, status: string, reviewed_by?: string) =>
+      request<any>('PATCH', `/admin/plan-changes/${id}`, { status, reviewed_by }),
+  },
+  ratings: {
+    list: (filters?: { employee_id?: string; employer_id?: string }) => {
+      const qs = filters ? '?' + new URLSearchParams(filters as any).toString() : '';
+      return request<any[]>('GET', `/admin/ratings${qs}`);
+    },
+    upsert: (data: Record<string, any>) => request<any>('POST', '/admin/ratings', data),
+  },
 };
