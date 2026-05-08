@@ -7,22 +7,21 @@ const router = express.Router();
 
 // ─── WAGES ───────────────────────────────────────────────────────────────────
 
-// GET /wages
+// GET /wages — returns employee_wages configuration records
 router.get('/', authenticate, async (req, res) => {
   const { employee_id } = req.query;
   try {
     let q = `
-      SELECT w.*, p.name AS employee_name
-      FROM wages w
-      JOIN employees e ON w.employee_id = e.id
-      JOIN profiles p ON e.user_id = p.id
+      SELECT ew.*, p.name AS employee_name, e.user_id AS employee_user_id
+      FROM employee_wages ew
+      JOIN employees e ON ew.employee_id = e.id
+      LEFT JOIN profiles p ON e.user_id = p.id
       WHERE 1=1
     `;
     const params = {};
-    if (req.user.role === 'employer') { q += ' AND e.employer_id = @employer_id'; params.employer_id = req.user.id; }
+    if (req.user.role === 'employer') { q += ' AND ew.employer_id = @employer_id'; params.employer_id = req.user.id; }
     else { q += ' AND e.user_id = @user_id'; params.user_id = req.user.id; }
-    if (employee_id) { q += ' AND w.employee_id = @employee_id'; params.employee_id = employee_id; }
-    q += ' ORDER BY w.period_start DESC';
+    if (employee_id) { q += ' AND ew.employee_id = @employee_id'; params.employee_id = employee_id; }
 
     const result = await query(q, params);
     res.json(result.recordset);
@@ -173,7 +172,10 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       loan_date: loan_date || null,
       paid_amount: paid_amount ?? 0,
     });
-    res.status(201).json(result.recordset[0]);
+    // Tell frontend whether employee has the app so it knows to skip QR flow
+    const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: employee_id });
+    const loan = result.recordset[0];
+    res.status(201).json({ ...loan, employee_has_app: !!(empRow.recordset[0]?.user_id) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to create loan' });
@@ -349,6 +351,24 @@ router.post('/statements', authenticate, requireEmployer, async (req, res) => {
       details: details ? JSON.stringify(details) : null,
       message: message || null,
     });
+
+    // Resolve the employee's profile user_id for the message receiver
+    let receiverId = user_id;
+    if (!receiverId && employee_id) {
+      const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: employee_id });
+      receiverId = empRow.recordset[0]?.user_id || null;
+    }
+
+    // Create a message so the statement appears in the employee's message feed
+    if (receiverId) {
+      const msgContent = message
+        || `Wage statement: ${type || 'statement'} — ${amount}${description ? ` (${description})` : ''}`;
+      await query(`
+        INSERT INTO messages (id, sender_id, receiver_id, content, is_read, created_at)
+        VALUES (@id, @sender, @receiver, @content, 0, GETUTCDATE())
+      `, { id: uuidv4(), sender: req.user.id, receiver: receiverId, content: msgContent });
+    }
+
     res.status(201).json(result.recordset[0]);
   } catch (err) {
     console.error(err);
