@@ -59,12 +59,28 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     let employeeUserId = user_id;
 
     if (!employeeUserId) {
-      // Manual add - create a profile shell
-      employeeUserId = uuidv4();
-      await query(`
-        INSERT INTO profiles (id, name, phone, email, role, created_at)
-        VALUES (@id, @name, @phone, @email, 'employee', GETUTCDATE())
-      `, { id: employeeUserId, name, phone: phone || null, email: email || null });
+      if (phone || email) {
+        // Avoid unique constraint violation on phone/email — reuse existing profile if found
+        let existingId = null;
+        if (phone) {
+          const r = await query('SELECT id FROM profiles WHERE phone = @phone', { phone });
+          if (r.recordset.length) existingId = r.recordset[0].id;
+        }
+        if (!existingId && email) {
+          const r = await query('SELECT id FROM profiles WHERE email = @email', { email });
+          if (r.recordset.length) existingId = r.recordset[0].id;
+        }
+        if (existingId) {
+          employeeUserId = existingId;
+        } else {
+          employeeUserId = uuidv4();
+          await query(`
+            INSERT INTO profiles (id, name, phone, email, role, created_at)
+            VALUES (@id, @name, @phone, @email, 'employee', GETUTCDATE())
+          `, { id: employeeUserId, name, phone: phone || null, email: email || null });
+        }
+      }
+      // No phone or email: leave employeeUserId null — employee exists without a profile link
     }
 
     const employeeId = uuidv4();

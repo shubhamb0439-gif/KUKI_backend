@@ -216,7 +216,7 @@ router.post('/plan-changes', authenticate, async (req, res) => {
     res.status(201).json({ id });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to create plan change request' });
+    res.status(500).json({ error: err.message || 'Failed to create plan change request' });
   }
 });
 
