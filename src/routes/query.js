@@ -76,13 +76,21 @@ router.get('/:table', authenticate, async (req, res) => {
     // Build select
     let selectCols = '*';
     if (req.query.select && req.query.select !== '*') {
-      // Handle basic column selection (ignore relation syntax like profiles!fkey(name))
-      selectCols = req.query.select
-        .replace(/\s+/g, '')
-        .split(',')
+      // Split only on top-level commas (not commas inside fkey parens like profiles!fkey(a,b,c))
+      const topLevel = [];
+      let depth = 0, cur = '';
+      for (const ch of req.query.select.replace(/\s+/g, '')) {
+        if (ch === '(') { depth++; cur += ch; }
+        else if (ch === ')') { depth--; cur += ch; }
+        else if (ch === ',' && depth === 0) { topLevel.push(cur); cur = ''; }
+        else { cur += ch; }
+      }
+      if (cur) topLevel.push(cur);
+
+      selectCols = topLevel
         .map(c => {
           if (c === '*') return '*';
-          if (c.includes('(') || c.includes('!')) return null;
+          if (c.includes('(') || c.includes('!') || c.includes(')')) return null;
           return `[${c}]`;
         })
         .filter(Boolean)
