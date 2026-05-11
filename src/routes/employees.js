@@ -128,6 +128,56 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
   }
 });
 
+// POST /employees/link — employee scans employer QR code to link themselves
+// Does NOT require employer role — called with the employee's own JWT
+router.post('/link', authenticate, async (req, res) => {
+  const { employer_id, employment_type, wage_amount, wage_type } = req.body;
+  if (!employer_id) return res.status(400).json({ error: 'employer_id is required' });
+
+  try {
+    // Verify the employer exists
+    const empProfile = await query('SELECT id FROM profiles WHERE id = @id', { id: employer_id });
+    if (!empProfile.recordset.length) return res.status(404).json({ error: 'Employer not found' });
+
+    // Check if already linked
+    const existing = await query(
+      `SELECT id, status FROM employees WHERE user_id = @uid AND employer_id = @eid`,
+      { uid: req.user.id, eid: employer_id }
+    );
+
+    if (existing.recordset.length > 0) {
+      const emp = existing.recordset[0];
+      if (emp.status === 'active') {
+        return res.status(200).json({ id: emp.id, user_id: req.user.id, already_linked: true });
+      }
+      // Reactivate if previously removed
+      await query(
+        `UPDATE employees SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`,
+        { id: emp.id }
+      );
+      return res.status(200).json({ id: emp.id, user_id: req.user.id, reactivated: true });
+    }
+
+    const employeeId = uuidv4();
+    await query(`
+      INSERT INTO employees (id, user_id, employer_id, employment_type, wage_amount, wage_type, status, created_at)
+      VALUES (@id, @user_id, @employer_id, @employment_type, @wage_amount, @wage_type, 'active', GETUTCDATE())
+    `, {
+      id: employeeId,
+      user_id: req.user.id,
+      employer_id,
+      employment_type: normalizeEmploymentType(employment_type),
+      wage_amount: wage_amount || 0,
+      wage_type: normalizeWageType(wage_type),
+    });
+
+    res.status(201).json({ id: employeeId, user_id: req.user.id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to link to employer' });
+  }
+});
+
 // PATCH /employees/:id
 router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
   const allowed = ['status', 'employment_type', 'wage_amount', 'wage_type', 'end_date'];
