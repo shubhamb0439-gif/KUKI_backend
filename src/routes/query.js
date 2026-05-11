@@ -1,4 +1,5 @@
 const express = require('express');
+const { v4: uuidv4 } = require('uuid');
 const { query, sql } = require('../db');
 const { authenticate } = require('../middleware/auth');
 
@@ -135,6 +136,20 @@ router.get('/:table', authenticate, async (req, res) => {
   }
 });
 
+// Tables that carry employer_id — auto-inject from JWT if missing
+const EMPLOYER_ID_TABLES = new Set([
+  'employees', 'employee_wages', 'wage_loans', 'wage_bonuses', 'wage_contracts',
+  'wage_statements', 'job_postings', 'qr_transactions', 'performance_ratings',
+  'employer_ratings', 'employee_ratings',
+]);
+
+// Table-specific default field values injected when not present in data
+const TABLE_DEFAULTS = {
+  job_postings: { status: 'active' },
+  wage_loans:   { status: 'active' },
+  job_applications: { status: 'pending' },
+};
+
 // POST /query/:table - insert
 router.post('/:table', authenticate, async (req, res) => {
   try {
@@ -142,7 +157,23 @@ router.post('/:table', authenticate, async (req, res) => {
     const { data: insertData } = req.body;
     if (!insertData) return res.status(400).json({ error: 'No data provided' });
 
-    const row = Array.isArray(insertData) ? insertData[0] : insertData;
+    const row = { ...(Array.isArray(insertData) ? insertData[0] : insertData) };
+
+    // Auto-inject id and created_at if missing
+    if (!row.id) row.id = uuidv4();
+    if (!row.created_at) row.created_at = new Date();
+
+    // Auto-inject employer_id from JWT for known tables
+    if (EMPLOYER_ID_TABLES.has(req.params.table) && !row.employer_id) {
+      row.employer_id = req.user.id;
+    }
+
+    // Table-specific defaults
+    const defaults = TABLE_DEFAULTS[req.params.table];
+    if (defaults) {
+      Object.entries(defaults).forEach(([k, v]) => { if (!row[k]) row[k] = v; });
+    }
+
     const cols = Object.keys(row);
     const paramNames = cols.map((_, i) => `@p${i}`);
     const params = {};

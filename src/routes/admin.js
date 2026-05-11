@@ -251,14 +251,30 @@ router.patch('/plan-changes/:id', authenticate, requireAdmin, async (req, res) =
 
 // ─── RATINGS ──────────────────────────────────────────────────────────────────
 
-// GET /admin/ratings
+// GET /admin/ratings — also serves employer ratings page
 router.get('/ratings', authenticate, async (req, res) => {
   const { employee_id, employer_id } = req.query;
   try {
-    let q = `SELECT * FROM employee_ratings WHERE 1=1`;
+    let q = `
+      SELECT er.*,
+        ep.name  AS employee_name,
+        ep.email AS employee_email,
+        ep.profile_photo AS employee_photo,
+        ep.profession AS employee_profession
+      FROM employee_ratings er
+      LEFT JOIN employees e  ON er.employee_id = e.id
+      LEFT JOIN profiles ep  ON e.user_id = ep.id
+      WHERE 1=1
+    `;
     const params = {};
-    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
-    if (employer_id) { q += ' AND employer_id = @employer_id'; params.employer_id = employer_id; }
+    // Employer sees only their own ratings by default
+    if (!employee_id && !employer_id && req.user.role === 'employer') {
+      q += ' AND er.employer_id = @employer_id';
+      params.employer_id = req.user.id;
+    }
+    if (employee_id) { q += ' AND er.employee_id = @employee_id'; params.employee_id = employee_id; }
+    if (employer_id) { q += ' AND er.employer_id = @employer_id2'; params.employer_id2 = employer_id; }
+    q += ' ORDER BY er.updated_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {
