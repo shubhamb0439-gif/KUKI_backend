@@ -26,12 +26,9 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// GET /profiles/:id
+// GET /profiles/:id — any authenticated user can read any profile (password_hash stripped)
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
-      return res.status(403).json({ error: 'Access denied' });
-    }
     const result = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
     if (result.recordset.length === 0) return res.status(404).json({ error: 'Profile not found' });
     const { password_hash, ...safe } = result.recordset[0];

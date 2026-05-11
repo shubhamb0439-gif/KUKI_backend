@@ -367,14 +367,19 @@ router.post('/statements', authenticate, requireEmployer, async (req, res) => {
       receiverId = empRow.recordset[0]?.user_id || null;
     }
 
-    // Create a message so the statement appears in the employee's message feed
+    // Create a message so the statement appears in the employee's message feed.
+    // Isolated try/catch: a message failure must not roll back the statement.
     if (receiverId) {
-      const msgContent = message
-        || `Wage statement: ${type || 'statement'} — ${amount}${description ? ` (${description})` : ''}`;
-      await query(`
-        INSERT INTO messages (id, sender_id, receiver_id, content, is_read, created_at)
-        VALUES (@id, @sender, @receiver, @content, 0, GETUTCDATE())
-      `, { id: uuidv4(), sender: req.user.id, receiver: receiverId, content: msgContent });
+      try {
+        const msgContent = message
+          || `Wage statement: ${type || 'statement'} — ${amount}${description ? ` (${description})` : ''}`;
+        await query(`
+          INSERT INTO messages (id, sender_id, receiver_id, content, is_read, created_at)
+          VALUES (@id, @sender, @receiver, @content, 0, GETUTCDATE())
+        `, { id: uuidv4(), sender: req.user.id, receiver: receiverId, content: msgContent });
+      } catch (msgErr) {
+        console.error('Message creation failed (statement still saved):', msgErr.message);
+      }
     }
 
     res.status(201).json(result.recordset[0]);
