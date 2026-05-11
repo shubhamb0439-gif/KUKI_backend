@@ -7,6 +7,16 @@ const multer = require('multer');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+// Max employees and feature flags per plan
+const PLAN_LIMITS = {
+  free:         { max_employees: 3,   can_track_attendance: 0, can_access_full_statements: 0 },
+  basic:        { max_employees: 10,  can_track_attendance: 1, can_access_full_statements: 0 },
+  starter:      { max_employees: 10,  can_track_attendance: 1, can_access_full_statements: 0 },
+  professional: { max_employees: 50,  can_track_attendance: 1, can_access_full_statements: 1 },
+  pro:          { max_employees: 50,  can_track_attendance: 1, can_access_full_statements: 1 },
+  enterprise:   { max_employees: 999, can_track_attendance: 1, can_access_full_statements: 1 },
+};
+
 const PROFILE_COLS = `id, name, email, phone, role, ads_enabled, subscription_plan, subscription_status,
   subscription_expires_at, trial_ends_at, trial_used, trial_started_at, account_tier,
   max_employees, can_track_attendance, can_access_full_statements, created_at`;
@@ -52,7 +62,15 @@ router.patch('/:id', authenticate, async (req, res) => {
     'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
     'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
   ];
-  const updates = Object.keys(req.body)
+
+  // Auto-apply plan limits when subscription_plan changes
+  let bodyWithLimits = { ...req.body };
+  if (req.body.subscription_plan) {
+    const limits = PLAN_LIMITS[(req.body.subscription_plan || '').toLowerCase()];
+    if (limits) Object.assign(bodyWithLimits, limits);
+  }
+
+  const updates = Object.keys(bodyWithLimits)
     .filter(k => allowed.includes(k))
     .map(k => `${k} = @${k}`)
     .join(', ');
@@ -62,7 +80,7 @@ router.patch('/:id', authenticate, async (req, res) => {
   try {
     await query(
       `UPDATE profiles SET ${updates}, updated_at = GETUTCDATE() WHERE id = @id`,
-      { ...req.body, id: req.params.id }
+      { ...bodyWithLimits, id: req.params.id }
     );
     const result = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
     const { password_hash, ...safe } = result.recordset[0];
@@ -75,7 +93,22 @@ router.patch('/:id', authenticate, async (req, res) => {
 
 // POST /profiles/:id/photo
 router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res) => {
-  if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
+  const isOwnPhoto = req.params.id.toLowerCase() === req.user.id.toLowerCase();
+  const isAdmin = req.user.role === 'admin';
+
+  // Employers can upload photos for their own employees
+  let isEmployerOfTarget = false;
+  if (!isOwnPhoto && !isAdmin && req.user.role === 'employer') {
+    try {
+      const emp = await query(
+        `SELECT id FROM employees WHERE user_id = @uid AND employer_id = @eid AND status = 'active'`,
+        { uid: req.params.id, eid: req.user.id }
+      );
+      isEmployerOfTarget = emp.recordset.length > 0;
+    } catch (_) {}
+  }
+
+  if (!isOwnPhoto && !isAdmin && !isEmployerOfTarget) {
     return res.status(403).json({ error: 'Access denied' });
   }
   if (!req.file) return res.status(400).json({ error: 'No file provided' });

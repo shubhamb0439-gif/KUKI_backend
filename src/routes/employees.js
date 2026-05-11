@@ -36,7 +36,7 @@ router.get('/', authenticate, async (req, res) => {
       result = await query(`
         SELECT e.*, p.name AS employer_name
         FROM employees e
-        JOIN profiles p ON e.employer_id = p.id
+        LEFT JOIN profiles p ON e.employer_id = p.id
         WHERE e.user_id = @user_id AND e.status = 'active'
       `, { user_id: req.user.id });
     }
@@ -49,7 +49,7 @@ router.get('/', authenticate, async (req, res) => {
 
 // POST /employees - employer adds an employee
 router.post('/', authenticate, requireEmployer, async (req, res) => {
-  const { user_id, name, phone, email, employment_type, wage_amount, wage_type, start_date } = req.body;
+  const { user_id, name, phone, email, employment_type, wage_amount, wage_type, start_date, profile_photo } = req.body;
 
   if (!user_id && !name) {
     return res.status(400).json({ error: 'name is required when adding a new employee' });
@@ -75,9 +75,9 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
       } else {
         employeeUserId = uuidv4();
         await query(`
-          INSERT INTO profiles (id, name, phone, email, role, created_at)
-          VALUES (@id, @name, @phone, @email, 'employee', GETUTCDATE())
-        `, { id: employeeUserId, name, phone: phone || null, email: email || null });
+          INSERT INTO profiles (id, name, phone, email, role, profile_photo, created_at)
+          VALUES (@id, @name, @phone, @email, 'employee', @profile_photo, GETUTCDATE())
+        `, { id: employeeUserId, name, phone: phone || null, email: email || null, profile_photo: profile_photo || null });
       }
     }
 
@@ -127,10 +127,11 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 // DELETE /employees/:id - deactivate (not hard delete)
 router.delete('/:id', authenticate, requireEmployer, async (req, res) => {
   try {
-    await query(
+    const result = await query(
       `UPDATE employees SET status = 'inactive', updated_at = GETUTCDATE() WHERE id = @id AND employer_id = @employer_id`,
       { id: req.params.id, employer_id: req.user.id }
     );
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Employee not found' });
     res.json({ success: true });
   } catch (err) {
     console.error(err);
