@@ -29,7 +29,7 @@ router.get('/', authenticate, async (req, res) => {
         SELECT e.*, p.name, p.email, p.phone, p.profile_photo, p.profession, p.job_status
         FROM employees e
         LEFT JOIN profiles p ON e.user_id = p.id
-        WHERE e.employer_id = @employer_id
+        WHERE e.employer_id = @employer_id AND e.status = 'active'
         ORDER BY e.created_at DESC
       `, { employer_id: req.user.id });
     } else {
