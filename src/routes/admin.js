@@ -232,16 +232,16 @@ router.post('/plan-changes', authenticate, async (req, res) => {
 
 // PATCH /admin/plan-changes/:id
 router.patch('/plan-changes/:id', authenticate, requireAdmin, async (req, res) => {
-  const { status, reviewed_by } = req.body;
+  const { status, reviewed_by, reviewed_at } = req.body;
   try {
     const result = await query(`
       UPDATE plan_change_requests
       SET status      = ISNULL(@status, status),
-          reviewed_at = GETUTCDATE(),
+          reviewed_at = ISNULL(@reviewed_at, GETUTCDATE()),
           reviewed_by = ISNULL(@reviewed_by, reviewed_by)
       OUTPUT INSERTED.*
       WHERE id = @id
-    `, { id: req.params.id, status: status ?? null, reviewed_by: reviewed_by ?? null });
+    `, { id: req.params.id, status: status ?? null, reviewed_by: reviewed_by ?? null, reviewed_at: reviewed_at ?? null });
     res.json(result.recordset[0]);
   } catch (err) {
     console.error(err);

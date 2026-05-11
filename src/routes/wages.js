@@ -123,10 +123,22 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 router.get('/loans', authenticate, async (req, res) => {
   const { employee_id } = req.query;
   try {
-    let q = `SELECT * FROM wage_loans WHERE employer_id = @employer_id`;
-    const params = { employer_id: req.user.id };
-    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
-    q += ' ORDER BY created_at DESC';
+    let q, params = {};
+    if (req.user.role === 'employer' || req.user.role === 'admin') {
+      q = `SELECT wl.*, p.name AS employee_name FROM wage_loans wl
+           LEFT JOIN employees e ON wl.employee_id = e.id
+           LEFT JOIN profiles p ON e.user_id = p.id
+           WHERE wl.employer_id = @employer_id`;
+      params.employer_id = req.user.id;
+    } else {
+      q = `SELECT wl.*, p.name AS employer_name FROM wage_loans wl
+           LEFT JOIN profiles p ON wl.employer_id = p.id
+           JOIN employees e ON wl.employee_id = e.id
+           WHERE e.user_id = @user_id`;
+      params.user_id = req.user.id;
+    }
+    if (employee_id) { q += ' AND wl.employee_id = @employee_id'; params.employee_id = employee_id; }
+    q += ' ORDER BY wl.created_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {
@@ -212,10 +224,21 @@ router.patch('/loans/:id', authenticate, requireEmployer, async (req, res) => {
 router.get('/bonuses', authenticate, async (req, res) => {
   const { employee_id } = req.query;
   try {
-    let q = `SELECT * FROM wage_bonuses WHERE employer_id = @employer_id`;
-    const params = { employer_id: req.user.id };
-    if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
-    q += ' ORDER BY created_at DESC';
+    let q, params = {};
+    if (req.user.role === 'employer' || req.user.role === 'admin') {
+      q = `SELECT wb.*, p.name AS employee_name FROM wage_bonuses wb
+           LEFT JOIN employees e ON wb.employee_id = e.id
+           LEFT JOIN profiles p ON e.user_id = p.id
+           WHERE wb.employer_id = @employer_id`;
+      params.employer_id = req.user.id;
+    } else {
+      q = `SELECT wb.* FROM wage_bonuses wb
+           JOIN employees e ON wb.employee_id = e.id
+           WHERE e.user_id = @user_id`;
+      params.user_id = req.user.id;
+    }
+    if (employee_id) { q += ' AND wb.employee_id = @employee_id'; params.employee_id = employee_id; }
+    q += ' ORDER BY wb.created_at DESC';
     const result = await query(q, params);
     res.json(result.recordset);
   } catch (err) {

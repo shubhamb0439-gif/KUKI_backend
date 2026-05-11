@@ -49,7 +49,7 @@ router.get('/', authenticate, async (req, res) => {
 
 // PATCH /qr-transactions/:id — dynamic update, return updated row
 router.patch('/:id', authenticate, async (req, res) => {
-  const ALLOWED = ['transaction_type', 'amount', 'qr_code', 'status', 'metadata'];
+  const ALLOWED = ['transaction_type', 'amount', 'qr_code', 'status', 'metadata', 'scanned_at'];
   const keys = Object.keys(req.body).filter(k => ALLOWED.includes(k));
   if (!keys.length) return res.status(400).json({ error: 'No valid fields to update' });
 
