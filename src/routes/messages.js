@@ -85,7 +85,8 @@ router.post('/jobs', authenticate, async (req, res) => {
     `, { id, employer_id: req.user.id, title, desc: description || null, location: location || null, wage: wage || null, emp_type: employment_type || null, role_id: job_role_id || null });
     res.status(201).json({ id });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to create job posting' });
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to create job posting' });
   }
 });
 
@@ -99,7 +100,8 @@ router.post('/jobs/:id/apply', authenticate, async (req, res) => {
     `, { id, job_id: req.params.id, applicant_id: req.user.id });
     res.status(201).json({ id });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to apply' });
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Failed to apply' });
   }
 });
 

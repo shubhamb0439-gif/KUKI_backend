@@ -372,11 +372,49 @@ CREATE TABLE employee_wages (
 
 -- ─── ADD MISSING COLUMNS TO EXISTING TABLES ──────────────────
 
--- profiles
+-- profiles: columns added after initial creation
 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'trial_used')
   ALTER TABLE profiles ADD trial_used BIT DEFAULT 0;
 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'trial_started_at')
   ALTER TABLE profiles ADD trial_started_at DATETIMEOFFSET NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'profession')
+  ALTER TABLE profiles ADD profession NVARCHAR(255) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'job_status')
+  ALTER TABLE profiles ADD job_status NVARCHAR(50) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'show_status_ring')
+  ALTER TABLE profiles ADD show_status_ring BIT DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'ad_level')
+  ALTER TABLE profiles ADD ad_level NVARCHAR(50) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'language_preference')
+  ALTER TABLE profiles ADD language_preference NVARCHAR(10) DEFAULT 'en';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'last_login_at')
+  ALTER TABLE profiles ADD last_login_at DATETIMEOFFSET NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'account_tier')
+  ALTER TABLE profiles ADD account_tier NVARCHAR(50) NULL DEFAULT 'free';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'subscription_plan')
+  ALTER TABLE profiles ADD subscription_plan NVARCHAR(50) NULL DEFAULT 'free';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'subscription_status')
+  ALTER TABLE profiles ADD subscription_status NVARCHAR(50) NULL DEFAULT 'inactive';
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'subscription_expires_at')
+  ALTER TABLE profiles ADD subscription_expires_at DATETIMEOFFSET NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'trial_ends_at')
+  ALTER TABLE profiles ADD trial_ends_at DATETIMEOFFSET NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'payment_method_added')
+  ALTER TABLE profiles ADD payment_method_added BIT DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'max_employees')
+  ALTER TABLE profiles ADD max_employees INT DEFAULT 3;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'can_track_attendance')
+  ALTER TABLE profiles ADD can_track_attendance BIT DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'can_access_full_statements')
+  ALTER TABLE profiles ADD can_access_full_statements BIT DEFAULT 0;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'account_type')
+  ALTER TABLE profiles ADD account_type NVARCHAR(50) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'profile_photo')
+  ALTER TABLE profiles ADD profile_photo NVARCHAR(500) NULL;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'ads_enabled')
+  ALTER TABLE profiles ADD ads_enabled BIT DEFAULT 1;
+IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('profiles') AND name = 'updated_at')
+  ALTER TABLE profiles ADD updated_at DATETIMEOFFSET DEFAULT GETUTCDATE();
 
 -- job_applications
 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID('job_applications') AND name = 'updated_at')

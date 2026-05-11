@@ -318,9 +318,17 @@ router.post('/contracts', authenticate, requireEmployer, async (req, res) => {
 router.get('/statements', authenticate, async (req, res) => {
   const { user_id, employee_id } = req.query;
   try {
-    let q = `SELECT * FROM wage_statements WHERE employer_id = @employer_id`;
-    const params = { employer_id: req.user.id };
-    if (user_id) { q += ' AND user_id = @user_id'; params.user_id = user_id; }
+    let q = `SELECT * FROM wage_statements WHERE 1=1`;
+    const params = {};
+    if (req.user.role === 'employer' || req.user.role === 'admin') {
+      q += ' AND employer_id = @employer_id';
+      params.employer_id = req.user.id;
+    } else {
+      // Employee sees statements addressed to them
+      q += ' AND user_id = @user_id';
+      params.user_id = req.user.id;
+    }
+    if (user_id) { q += ' AND user_id = @uid'; params.uid = user_id; }
     if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
     q += ' ORDER BY created_at DESC';
     const result = await query(q, params);

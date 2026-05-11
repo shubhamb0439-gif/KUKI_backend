@@ -28,7 +28,7 @@ router.get('/', authenticate, async (req, res) => {
       result = await query(`
         SELECT e.*, p.name, p.email, p.phone, p.profile_photo, p.profession, p.job_status
         FROM employees e
-        JOIN profiles p ON e.user_id = p.id
+        LEFT JOIN profiles p ON e.user_id = p.id
         WHERE e.employer_id = @employer_id
         ORDER BY e.created_at DESC
       `, { employer_id: req.user.id });
@@ -59,28 +59,26 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     let employeeUserId = user_id;
 
     if (!employeeUserId) {
-      if (phone || email) {
-        // Avoid unique constraint violation on phone/email — reuse existing profile if found
-        let existingId = null;
-        if (phone) {
-          const r = await query('SELECT id FROM profiles WHERE phone = @phone', { phone });
-          if (r.recordset.length) existingId = r.recordset[0].id;
-        }
-        if (!existingId && email) {
-          const r = await query('SELECT id FROM profiles WHERE email = @email', { email });
-          if (r.recordset.length) existingId = r.recordset[0].id;
-        }
-        if (existingId) {
-          employeeUserId = existingId;
-        } else {
-          employeeUserId = uuidv4();
-          await query(`
-            INSERT INTO profiles (id, name, phone, email, role, created_at)
-            VALUES (@id, @name, @phone, @email, 'employee', GETUTCDATE())
-          `, { id: employeeUserId, name, phone: phone || null, email: email || null });
-        }
+      // Always create a profile so the employee gets a user_id.
+      // This is required for wage statements → messages delivery to work.
+      let existingId = null;
+      if (phone) {
+        const r = await query('SELECT id FROM profiles WHERE phone = @phone', { phone });
+        if (r.recordset.length) existingId = r.recordset[0].id;
       }
-      // No phone or email: leave employeeUserId null — employee exists without a profile link
+      if (!existingId && email) {
+        const r = await query('SELECT id FROM profiles WHERE email = @email', { email });
+        if (r.recordset.length) existingId = r.recordset[0].id;
+      }
+      if (existingId) {
+        employeeUserId = existingId;
+      } else {
+        employeeUserId = uuidv4();
+        await query(`
+          INSERT INTO profiles (id, name, phone, email, role, created_at)
+          VALUES (@id, @name, @phone, @email, 'employee', GETUTCDATE())
+        `, { id: employeeUserId, name, phone: phone || null, email: email || null });
+      }
     }
 
     const employeeId = uuidv4();
