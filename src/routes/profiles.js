@@ -93,33 +93,43 @@ router.patch('/:id', authenticate, async (req, res) => {
 });
 
 // POST /profiles/:id/photo
+// :id can be either a profiles.id OR an employees.id — we resolve it
 router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res) => {
-  const isOwnPhoto = req.params.id.toLowerCase() === req.user.id.toLowerCase();
-  const isAdmin = req.user.role === 'admin';
-
-  // Employers can upload photos for their own employees
-  let isEmployerOfTarget = false;
-  if (!isOwnPhoto && !isAdmin && req.user.role === 'employer') {
-    try {
-      const emp = await query(
-        `SELECT id FROM employees WHERE user_id = @uid AND employer_id = @eid AND status = 'active'`,
-        { uid: req.params.id, eid: req.user.id }
-      );
-      isEmployerOfTarget = emp.recordset.length > 0;
-    } catch (_) {}
-  }
-
-  if (!isOwnPhoto && !isAdmin && !isEmployerOfTarget) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
   if (!req.file) return res.status(400).json({ error: 'No file provided' });
 
   try {
-    const blobName = `${req.params.id}-${Date.now()}.jpg`;
+    // Resolve profile ID — the caller may pass employees.id instead of profiles.id
+    let profileId = req.params.id;
+    const profileCheck = await query('SELECT id FROM profiles WHERE id = @id', { id: req.params.id });
+    if (!profileCheck.recordset.length) {
+      // Try treating it as an employees table ID
+      const empCheck = await query('SELECT user_id FROM employees WHERE id = @id', { id: req.params.id });
+      if (!empCheck.recordset.length) return res.status(404).json({ error: 'Profile not found' });
+      profileId = empCheck.recordset[0].user_id;
+    }
+
+    const isOwnPhoto = profileId.toLowerCase() === req.user.id.toLowerCase();
+    const isAdmin = req.user.role === 'admin';
+
+    // Employers can upload photos for their active employees
+    let isEmployerOfTarget = false;
+    if (!isOwnPhoto && !isAdmin && req.user.role === 'employer') {
+      const emp = await query(
+        `SELECT id FROM employees WHERE user_id = @uid AND employer_id = @eid AND status = 'active'`,
+        { uid: profileId, eid: req.user.id }
+      );
+      isEmployerOfTarget = emp.recordset.length > 0;
+    }
+
+    if (!isOwnPhoto && !isAdmin && !isEmployerOfTarget) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    const blobName = `${profileId}-${Date.now()}.jpg`;
     const url = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
     await query(
       'UPDATE profiles SET profile_photo = @url, updated_at = GETUTCDATE() WHERE id = @id',
-      { url, id: req.params.id }
+      { url, id: profileId }
     );
     res.json({ profile_photo: url });
   } catch (err) {

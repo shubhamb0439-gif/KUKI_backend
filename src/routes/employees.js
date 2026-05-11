@@ -59,8 +59,7 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     let employeeUserId = user_id;
 
     if (!employeeUserId) {
-      // Always create a profile so the employee gets a user_id.
-      // This is required for wage statements → messages delivery to work.
+      // Manual add — find or create a profile
       let existingId = null;
       if (phone) {
         const r = await query('SELECT id FROM profiles WHERE phone = @phone', { phone });
@@ -72,6 +71,13 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
       }
       if (existingId) {
         employeeUserId = existingId;
+        // Update photo on existing profile if employer provided one
+        if (profile_photo) {
+          await query(
+            'UPDATE profiles SET profile_photo = @profile_photo, updated_at = GETUTCDATE() WHERE id = @id',
+            { profile_photo, id: existingId }
+          );
+        }
       } else {
         employeeUserId = uuidv4();
         await query(`
@@ -79,6 +85,26 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
           VALUES (@id, @name, @phone, @email, 'employee', @profile_photo, GETUTCDATE())
         `, { id: employeeUserId, name, phone: phone || null, email: email || null, profile_photo: profile_photo || null });
       }
+    }
+
+    // Check if this user is already linked to this employer (e.g. manual add + QR scan)
+    const existing = await query(
+      `SELECT id, status FROM employees WHERE user_id = @uid AND employer_id = @eid`,
+      { uid: employeeUserId, eid: req.user.id }
+    );
+
+    if (existing.recordset.length > 0) {
+      const emp = existing.recordset[0];
+      if (emp.status === 'active') {
+        // Already linked and active — just return the existing record
+        return res.status(200).json({ id: emp.id, user_id: employeeUserId, already_linked: true });
+      }
+      // Was removed — reactivate instead of creating a duplicate
+      await query(
+        `UPDATE employees SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`,
+        { id: emp.id }
+      );
+      return res.status(200).json({ id: emp.id, user_id: employeeUserId, reactivated: true });
     }
 
     const employeeId = uuidv4();
