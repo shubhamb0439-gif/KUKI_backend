@@ -9,12 +9,13 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 *
 
 // Max employees and feature flags per plan
 const PLAN_LIMITS = {
-  free:         { max_employees: 3,   can_track_attendance: 0, can_access_full_statements: 0 },
-  basic:        { max_employees: 10,  can_track_attendance: 1, can_access_full_statements: 0 },
-  starter:      { max_employees: 10,  can_track_attendance: 1, can_access_full_statements: 0 },
-  professional: { max_employees: 50,  can_track_attendance: 1, can_access_full_statements: 1 },
-  pro:          { max_employees: 50,  can_track_attendance: 1, can_access_full_statements: 1 },
-  enterprise:   { max_employees: 999, can_track_attendance: 1, can_access_full_statements: 1 },
+  free:         { max_employees: 1,  can_track_attendance: 0, can_access_full_statements: 0 },
+  core:         { max_employees: 3,  can_track_attendance: 1, can_access_full_statements: 0 },
+  pro:          { max_employees: 6,  can_track_attendance: 1, can_access_full_statements: 0 },
+  'pro plus':   { max_employees: 12, can_track_attendance: 1, can_access_full_statements: 1 },
+  pro_plus:     { max_employees: 12, can_track_attendance: 1, can_access_full_statements: 1 },
+  professional: { max_employees: 12, can_track_attendance: 1, can_access_full_statements: 1 },
+  enterprise:   { max_employees: 12, can_track_attendance: 1, can_access_full_statements: 1 },
 };
 
 const PROFILE_COLS = `id, name, email, phone, role, ads_enabled, subscription_plan, subscription_status,
