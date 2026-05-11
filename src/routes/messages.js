@@ -93,11 +93,15 @@ router.post('/jobs', authenticate, async (req, res) => {
 // POST /messages/jobs/:id/apply
 router.post('/jobs/:id/apply', authenticate, async (req, res) => {
   try {
+    const jobRow = await query('SELECT employer_id FROM job_postings WHERE id = @job_id', { job_id: req.params.id });
+    if (!jobRow.recordset.length) return res.status(404).json({ error: 'Job not found' });
+    const employer_id = jobRow.recordset[0].employer_id;
+
     const id = uuidv4();
     await query(`
-      INSERT INTO job_applications (id, job_id, applicant_id, status, created_at)
-      VALUES (@id, @job_id, @applicant_id, 'pending', GETUTCDATE())
-    `, { id, job_id: req.params.id, applicant_id: req.user.id });
+      INSERT INTO job_applications (id, job_id, applicant_id, employer_id, status, created_at)
+      VALUES (@id, @job_id, @applicant_id, @employer_id, 'pending', GETUTCDATE())
+    `, { id, job_id: req.params.id, applicant_id: req.user.id, employer_id });
     res.status(201).json({ id });
   } catch (err) {
     console.error(err);
