@@ -16,7 +16,7 @@ router.get('/', authenticate, async (req, res) => {
     let q = `
       SELECT
         a.id, a.employee_id, a.employer_id,
-        ISNULL(a.attendance_date, CAST(a.[date] AS DATE))           AS attendance_date,
+        CONVERT(VARCHAR(10), ISNULL(a.attendance_date, a.[date]), 120) AS attendance_date,
         ISNULL(a.login_time,  a.clock_in)                          AS login_time,
         ISNULL(a.logout_time, a.clock_out)                         AS logout_time,
         ISNULL(a.total_hours, a.hours_worked)                      AS total_hours,
@@ -39,9 +39,9 @@ router.get('/', authenticate, async (req, res) => {
     }
 
     if (employee_id) { q += ' AND a.employee_id = @employee_id'; params.employee_id = employee_id; }
-    if (from) { q += ' AND ISNULL(a.attendance_date, CAST(a.[date] AS DATE)) >= @from'; params.from = from; }
-    if (to)   { q += ' AND ISNULL(a.attendance_date, CAST(a.[date] AS DATE)) <= @to';   params.to = to; }
-    q += ' ORDER BY ISNULL(a.attendance_date, CAST(a.[date] AS DATE)) DESC, ISNULL(a.login_time, a.clock_in) DESC';
+    if (from) { q += ' AND CAST(ISNULL(a.attendance_date, a.[date]) AS DATE) >= @from'; params.from = from; }
+    if (to)   { q += ' AND CAST(ISNULL(a.attendance_date, a.[date]) AS DATE) <= @to';  params.to = to; }
+    q += ' ORDER BY CAST(ISNULL(a.attendance_date, a.[date]) AS DATE) DESC, ISNULL(a.login_time, a.clock_in) DESC';
 
     const result = await query(q, params);
     res.json(result.recordset);

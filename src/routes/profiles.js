@@ -57,10 +57,11 @@ router.patch('/:id', authenticate, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
 
+  // Only columns confirmed to exist in the profiles table
   const allowed = [
-    'name', 'phone', 'email', 'profession', 'job_status', 'show_status_ring',
-    'account_type', 'account_tier', 'ads_enabled', 'profile_photo', 'currency',
-    'language_preference', 'subscription_plan', 'subscription_status',
+    'name', 'phone', 'email', 'profession', 'job_status',
+    'account_type', 'account_tier', 'ads_enabled', 'profile_photo',
+    'subscription_plan', 'subscription_status',
     'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
     'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
   ];
@@ -93,7 +94,11 @@ router.patch('/:id', authenticate, async (req, res) => {
     const { password_hash, ...safe } = result.recordset[0];
     res.json(safe);
   } catch (err) {
-    console.error(err);
+    console.error('PATCH /profiles error:', err.message);
+    if (err.message && err.message.includes('Invalid column name')) {
+      const col = err.message.match(/'([^']+)'/)?.[1] || 'unknown';
+      return res.status(400).json({ error: `Field '${col}' is not supported in profile updates` });
+    }
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });

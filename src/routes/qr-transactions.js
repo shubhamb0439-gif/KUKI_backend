@@ -134,47 +134,87 @@ router.post('/process', authenticate, async (req, res) => {
       await query(`UPDATE qr_transactions SET scanned_at = GETUTCDATE() WHERE id = @id`, { id: tx.id });
 
     } else if (type === 'loan') {
-      if (metadata.loan_id) {
-        await query(`UPDATE wage_loans SET status = 'active' WHERE id = @id`, { id: metadata.loan_id });
-        const loanRow = await query(`SELECT amount, currency, monthly_deduction FROM wage_loans WHERE id = @id`, { id: metadata.loan_id });
-        const loan = loanRow.recordset[0] || {};
+      // Create the loan record at scan time using QR transaction data + metadata
+      const loanAmount   = Number(tx.amount) || 0;
+      const interestRate = Number(metadata.interest_rate) || 0;
+      const tenureMonths = metadata.tenure_months ? Number(metadata.tenure_months) : null;
+      const totalAmount  = loanAmount + (loanAmount * interestRate / 100);
+      const monthlyDeduction = tenureMonths ? totalAmount / tenureMonths : loanAmount;
+      const loanCurrency = metadata.currency || 'INR';
 
-        // Recalculate loan_deductions + final_payable in employee_wages
-        try {
-          await query(`
-            UPDATE ew
-            SET loan_deductions = ISNULL(ld.total_monthly, 0),
-                final_payable = CASE
-                  WHEN (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0)) < 0
-                    THEN 0
-                    ELSE (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0))
-                END
-            FROM employee_wages ew
-            CROSS APPLY (
-              SELECT ISNULL(SUM(monthly_deduction), 0) AS total_monthly
-              FROM wage_loans
-              WHERE employee_id = @emp_id AND employer_id = @eid AND status = 'active'
-            ) ld
-            WHERE ew.employee_id = @emp_id AND ew.employer_id = @eid
-          `, { emp_id: employeeId, eid: resolvedEmployerId });
-        } catch (_) {}
+      // Use IDs from QR transaction — more reliable than resolved from JWT
+      const loanEmployeeId = tx.employee_id || employeeId;
+      const loanEmployerId = tx.employer_id || resolvedEmployerId;
 
-        try {
-          await query(`
-            INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, message, created_at)
-            VALUES (@id, @emp_id, @user_id, @eid, 'loan', @amount, @message, GETUTCDATE())
-          `, {
-            id: uuidv4(), emp_id: employeeId, user_id: req.user.id,
-            eid: resolvedEmployerId, amount: loan.amount || 0,
-            message: `LOAN RECEIVED\nAmount: ${loan.amount || 0} ${loan.currency || 'USD'}`,
-          });
-        } catch (_) {}
+      let createdLoanId = null;
+      try {
+        createdLoanId = uuidv4();
+        await query(`
+          INSERT INTO wage_loans
+            (id, employee_id, employer_id, amount, interest_rate, total_amount,
+             monthly_deduction, tenure_months, currency, status, remaining_amount, paid_amount, created_at)
+          VALUES
+            (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
+             @monthly_deduction, @tenure_months, @currency, 'active', @total_amount, 0, GETUTCDATE())
+        `, {
+          id: createdLoanId,
+          employee_id: loanEmployeeId,
+          employer_id: loanEmployerId,
+          amount: loanAmount,
+          interest_rate: interestRate,
+          total_amount: totalAmount,
+          monthly_deduction: monthlyDeduction,
+          tenure_months: tenureMonths,
+          currency: loanCurrency,
+        });
+        console.log(`Loan created at scan: ${createdLoanId} emp=${loanEmployeeId} amount=${loanAmount}`);
+      } catch (loanErr) {
+        console.error('Loan creation failed at scan:', loanErr.message);
       }
+
+      // Update loan_deductions in employee_wages
+      try {
+        await query(`
+          UPDATE employee_wages
+          SET loan_deductions = (
+                SELECT ISNULL(SUM(monthly_deduction), 0)
+                FROM wage_loans
+                WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+              ),
+              final_payable = CASE
+                WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                        SELECT ISNULL(SUM(monthly_deduction), 0)
+                        FROM wage_loans
+                        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                      )) < 0 THEN 0
+                ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                       SELECT ISNULL(SUM(monthly_deduction), 0)
+                       FROM wage_loans
+                       WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                     )
+              END,
+              updated_at = GETUTCDATE()
+          WHERE employee_id = @employee_id AND employer_id = @employer_id
+        `, { employee_id: loanEmployeeId, employer_id: loanEmployerId });
+      } catch (_) {}
+
+      // Wage statement
+      try {
+        await query(`
+          INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, message, created_at)
+          VALUES (@id, @emp_id, @user_id, @eid, 'loan', @amount, @message, GETUTCDATE())
+        `, {
+          id: uuidv4(), emp_id: loanEmployeeId, user_id: req.user.id,
+          eid: loanEmployerId, amount: loanAmount,
+          message: `LOAN RECEIVED\nAmount: ${loanAmount} ${loanCurrency}`,
+        });
+      } catch (_) {}
+
       await query(
         `UPDATE qr_transactions SET status = 'processed', scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
-      actionResult = { loan_id: metadata.loan_id || null };
+      actionResult = { loan_id: createdLoanId };
 
     } else if (type === 'wage_payment') {
       const wageRow = await query(
@@ -218,62 +258,7 @@ router.post('/', authenticate, async (req, res) => {
   try {
     let resolvedMetadata = metadata ? { ...metadata } : {};
 
-    // Auto-create loan record when employer generates a loan QR
-    if ((transaction_type || '').toLowerCase() === 'loan' && employee_id && amount) {
-      const loanId = uuidv4();
-      const loanAmount = Number(amount) || 0;
-      const tenureMonths = resolvedMetadata.tenure_months ? Number(resolvedMetadata.tenure_months) : null;
-      const monthlyDeduction = resolvedMetadata.monthly_deduction
-        ? Number(resolvedMetadata.monthly_deduction)
-        : (tenureMonths ? Math.ceil(loanAmount / tenureMonths) : loanAmount);
-
-      try {
-        // Only insert columns guaranteed to exist — no updated_at, no interest_rate
-        await query(`
-          INSERT INTO wage_loans
-            (id, employee_id, employer_id, amount, monthly_deduction, currency, status, created_at)
-          VALUES
-            (@id, @employee_id, @employer_id, @amount, @monthly_deduction, @currency, 'active', GETUTCDATE())
-        `, {
-          id: loanId,
-          employee_id,
-          employer_id: req.user.id,
-          amount: loanAmount,
-          monthly_deduction: monthlyDeduction,
-          currency: resolvedMetadata.currency || 'INR',
-        });
-
-        // Update loan_deductions in employee_wages
-        await query(`
-          UPDATE employee_wages
-          SET loan_deductions = (
-                SELECT ISNULL(SUM(monthly_deduction), 0)
-                FROM wage_loans
-                WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-              ),
-              final_payable = CASE
-                WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
-                        SELECT ISNULL(SUM(monthly_deduction), 0)
-                        FROM wage_loans
-                        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-                      )) < 0 THEN 0
-                ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
-                       SELECT ISNULL(SUM(monthly_deduction), 0)
-                       FROM wage_loans
-                       WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-                     )
-              END,
-              updated_at = GETUTCDATE()
-          WHERE employee_id = @employee_id AND employer_id = @employer_id
-        `, { employee_id, employer_id: req.user.id });
-
-        resolvedMetadata.loan_id = loanId;
-        console.log(`Loan created: ${loanId} for employee ${employee_id} amount ${loanAmount}`);
-      } catch (loanErr) {
-        console.error('Loan auto-create failed:', loanErr.message);
-        // Still create the QR — just without a loan record
-      }
-    }
+    // Loan details are stored in metadata — loan record is created at scan time (POST /process)
 
     const id = uuidv4();
     const result = await query(`
