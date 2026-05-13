@@ -7,6 +7,14 @@ const multer = require('multer');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+function normalizePhotoUrl(url) {
+  if (!url || url.startsWith('http')) return url;
+  const account = process.env.AZURE_STORAGE_ACCOUNT || 'kukistorageprod';
+  const container = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
+  const blobName = url.replace(/^\/storage\/[^/]+\//, '');
+  return `https://${account}.blob.core.windows.net/${container}/${blobName}`;
+}
+
 // Max employees and feature flags per plan
 const PLAN_LIMITS = {
   free:         { max_employees: 1,  can_track_attendance: 0, can_access_full_statements: 0 },
@@ -28,10 +36,11 @@ router.get('/', authenticate, async (req, res) => {
   try {
     if (req.user.role === 'admin') {
       const result = await query(`SELECT ${PROFILE_COLS} FROM profiles ORDER BY created_at DESC`);
-      return res.json(result.recordset);
+      return res.json(result.recordset.map(r => ({ ...r, profile_photo: normalizePhotoUrl(r.profile_photo) })));
     }
     const result = await query(`SELECT ${PROFILE_COLS} FROM profiles WHERE id = @id`, { id: req.user.id });
-    res.json(result.recordset[0] || null);
+    const row = result.recordset[0];
+    res.json(row ? { ...row, profile_photo: normalizePhotoUrl(row.profile_photo) } : null);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch profiles' });
@@ -44,7 +53,7 @@ router.get('/:id', authenticate, async (req, res) => {
     const result = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
     if (result.recordset.length === 0) return res.status(404).json({ error: 'Profile not found' });
     const { password_hash, ...safe } = result.recordset[0];
-    res.json(safe);
+    res.json({ ...safe, profile_photo: normalizePhotoUrl(safe.profile_photo) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch profile' });
@@ -92,7 +101,7 @@ router.patch('/:id', authenticate, async (req, res) => {
     );
     const result = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
     const { password_hash, ...safe } = result.recordset[0];
-    res.json(safe);
+    res.json({ ...safe, profile_photo: normalizePhotoUrl(safe.profile_photo) });
   } catch (err) {
     console.error('PATCH /profiles error:', err.message);
     if (err.message && err.message.includes('Invalid column name')) {
@@ -147,7 +156,7 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
     // Return full profile so frontend can update all state in one go
     const updated = await query('SELECT * FROM profiles WHERE id = @id', { id: profileId });
     const { password_hash, ...safe } = updated.recordset[0];
-    res.json({ ...safe, profile_photo: url });
+    res.json({ ...safe, profile_photo: normalizePhotoUrl(url) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Photo upload failed' });

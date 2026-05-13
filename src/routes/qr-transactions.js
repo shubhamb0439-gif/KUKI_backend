@@ -147,30 +147,26 @@ router.post('/process', authenticate, async (req, res) => {
       const loanEmployerId = tx.employer_id || resolvedEmployerId;
 
       let createdLoanId = null;
-      try {
-        createdLoanId = uuidv4();
-        await query(`
-          INSERT INTO wage_loans
-            (id, employee_id, employer_id, amount, interest_rate, total_amount,
-             monthly_deduction, tenure_months, currency, status, remaining_amount, paid_amount, created_at)
-          VALUES
-            (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
-             @monthly_deduction, @tenure_months, @currency, 'active', @total_amount, 0, GETUTCDATE())
-        `, {
-          id: createdLoanId,
-          employee_id: loanEmployeeId,
-          employer_id: loanEmployerId,
-          amount: loanAmount,
-          interest_rate: interestRate,
-          total_amount: totalAmount,
-          monthly_deduction: monthlyDeduction,
-          tenure_months: tenureMonths,
-          currency: loanCurrency,
-        });
-        console.log(`Loan created at scan: ${createdLoanId} emp=${loanEmployeeId} amount=${loanAmount}`);
-      } catch (loanErr) {
-        console.error('Loan creation failed at scan:', loanErr.message);
-      }
+      createdLoanId = uuidv4();
+      await query(`
+        INSERT INTO wage_loans
+          (id, employee_id, employer_id, amount, interest_rate, total_amount,
+           monthly_deduction, tenure_months, currency, status, remaining_amount, paid_amount, created_at)
+        VALUES
+          (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
+           @monthly_deduction, @tenure_months, @currency, 'active', @total_amount, 0, GETUTCDATE())
+      `, {
+        id: createdLoanId,
+        employee_id: loanEmployeeId,
+        employer_id: loanEmployerId,
+        amount: loanAmount,
+        interest_rate: interestRate,
+        total_amount: totalAmount,
+        monthly_deduction: monthlyDeduction,
+        tenure_months: tenureMonths,
+        currency: loanCurrency,
+      });
+      console.log(`Loan created at scan: ${createdLoanId} emp=${loanEmployeeId} amount=${loanAmount}`);
 
       // Update loan_deductions in employee_wages
       try {
