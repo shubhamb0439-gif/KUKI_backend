@@ -367,10 +367,26 @@ router.get('/statements', authenticate, async (req, res) => {
   }
 });
 
-// POST /wages/statements
-router.post('/statements', authenticate, requireEmployer, async (req, res) => {
+// POST /wages/statements — employer creates for employee, OR employee generates their own
+router.post('/statements', authenticate, async (req, res) => {
   const { employee_id, user_id, type, amount, description, period_start, period_end, details, message } = req.body;
   try {
+    let resolvedEmployeeId = employee_id || null;
+    let resolvedUserId = user_id || null;
+    let resolvedEmployerId = req.user.id;
+
+    // Employee generating their own statement
+    if (req.user.role !== 'employer' && req.user.role !== 'admin') {
+      const empRecord = await query(
+        `SELECT TOP 1 id, employer_id FROM employees WHERE user_id = @uid AND status = 'active' ORDER BY created_at DESC`,
+        { uid: req.user.id }
+      );
+      if (!empRecord.recordset.length) return res.status(404).json({ error: 'Employee record not found' });
+      resolvedEmployeeId = empRecord.recordset[0].id;
+      resolvedUserId = req.user.id;
+      resolvedEmployerId = empRecord.recordset[0].employer_id;
+    }
+
     const id = uuidv4();
     const result = await query(`
       INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, description,
@@ -379,8 +395,8 @@ router.post('/statements', authenticate, requireEmployer, async (req, res) => {
       VALUES (@id, @employee_id, @user_id, @employer_id, @type, @amount, @description,
         @period_start, @period_end, @details, @message, GETUTCDATE())
     `, {
-      id, employee_id, user_id: user_id || null, employer_id: req.user.id,
-      type: type || null, amount,
+      id, employee_id: resolvedEmployeeId, user_id: resolvedUserId, employer_id: resolvedEmployerId,
+      type: type || null, amount: amount || 0,
       description: description || null,
       period_start: period_start || null,
       period_end: period_end || null,
@@ -389,9 +405,9 @@ router.post('/statements', authenticate, requireEmployer, async (req, res) => {
     });
 
     // Resolve the employee's profile user_id for the message receiver
-    let receiverId = user_id;
-    if (!receiverId && employee_id) {
-      const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: employee_id });
+    let receiverId = resolvedUserId;
+    if (!receiverId && resolvedEmployeeId) {
+      const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: resolvedEmployeeId });
       receiverId = empRow.recordset[0]?.user_id || null;
     }
 

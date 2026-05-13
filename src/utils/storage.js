@@ -9,7 +9,13 @@ function getBlobClient() {
 async function uploadToBlob(blobName, buffer, contentType) {
   const client = getBlobClient();
   const container = client.getContainerClient(process.env.AZURE_STORAGE_CONTAINER || 'profile-photos');
-  await container.createIfNotExists({ access: 'blob' });
+  // createIfNotExists with access:'blob' throws on accounts where public blob access is disabled.
+  // Swallow the error — if the container already exists we can still upload fine.
+  try {
+    await container.createIfNotExists({ access: 'blob' });
+  } catch (_) {
+    await container.createIfNotExists();
+  }
   const blockBlob = container.getBlockBlobClient(blobName);
   await blockBlob.upload(buffer, buffer.length, {
     blobHTTPHeaders: { blobContentType: contentType },

@@ -14,9 +14,9 @@ router.post('/process', authenticate, async (req, res) => {
   if (!qr_code) return res.status(400).json({ error: 'qr_code is required' });
 
   try {
-    // Lookup by qr_code field OR by transaction id
+    // Lookup by qr_code field OR by transaction id (TRY_CAST prevents uniqueidentifier conversion error)
     const txResult = await query(
-      `SELECT * FROM qr_transactions WHERE qr_code = @val OR id = @val`,
+      `SELECT * FROM qr_transactions WHERE qr_code = @val OR id = TRY_CAST(@val AS uniqueidentifier)`,
       { val: qr_code }
     );
     if (!txResult.recordset.length) return res.status(404).json({ error: 'Invalid QR code' });
@@ -225,7 +225,7 @@ router.get('/', authenticate, async (req, res) => {
   if (!qr_code) return res.status(400).json({ error: 'qr_code is required' });
   try {
     const result = await query(
-      `SELECT * FROM qr_transactions WHERE qr_code = @qr_code OR id = @qr_code`,
+      `SELECT * FROM qr_transactions WHERE qr_code = @qr_code OR id = TRY_CAST(@qr_code AS uniqueidentifier)`,
       { qr_code }
     );
     if (!result.recordset.length) return res.status(404).json({ error: 'Not found' });
