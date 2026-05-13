@@ -136,8 +136,29 @@ router.post('/process', authenticate, async (req, res) => {
     } else if (type === 'loan') {
       if (metadata.loan_id) {
         await query(`UPDATE wage_loans SET status = 'active' WHERE id = @id`, { id: metadata.loan_id });
-        const loanRow = await query(`SELECT amount, currency FROM wage_loans WHERE id = @id`, { id: metadata.loan_id });
+        const loanRow = await query(`SELECT amount, currency, monthly_deduction FROM wage_loans WHERE id = @id`, { id: metadata.loan_id });
         const loan = loanRow.recordset[0] || {};
+
+        // Recalculate loan_deductions + final_payable in employee_wages
+        try {
+          await query(`
+            UPDATE ew
+            SET loan_deductions = ISNULL(ld.total_monthly, 0),
+                final_payable = CASE
+                  WHEN (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0)) < 0
+                    THEN 0
+                    ELSE (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0))
+                END
+            FROM employee_wages ew
+            CROSS APPLY (
+              SELECT ISNULL(SUM(monthly_deduction), 0) AS total_monthly
+              FROM wage_loans
+              WHERE employee_id = @emp_id AND employer_id = @eid AND status = 'active'
+            ) ld
+            WHERE ew.employee_id = @emp_id AND ew.employer_id = @eid
+          `, { emp_id: employeeId, eid: resolvedEmployerId });
+        } catch (_) {}
+
         try {
           await query(`
             INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, message, created_at)

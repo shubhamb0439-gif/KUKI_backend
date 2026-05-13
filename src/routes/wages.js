@@ -185,6 +185,24 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       paid_amount: paid_amount ?? 0,
       tenure_months: tenure_months ?? null,
     });
+    // Auto-update loan_deductions + final_payable in employee_wages
+    await query(`
+      UPDATE ew
+      SET loan_deductions = ISNULL(ld.total_monthly, 0),
+          final_payable = CASE
+            WHEN (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0)) < 0
+              THEN 0
+              ELSE (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0))
+          END
+      FROM employee_wages ew
+      CROSS APPLY (
+        SELECT ISNULL(SUM(monthly_deduction), 0) AS total_monthly
+        FROM wage_loans
+        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+      ) ld
+      WHERE ew.employee_id = @employee_id AND ew.employer_id = @employer_id
+    `, { employee_id, employer_id: req.user.id });
+
     // employee_has_app = true only if employee has a real account (password_hash set)
     // Manually added employees have no password_hash so skip QR and grant directly
     const empRow = await query(
@@ -256,16 +274,29 @@ router.get('/bonuses', authenticate, async (req, res) => {
 router.post('/bonuses', authenticate, requireEmployer, async (req, res) => {
   const { employee_id, type, category, amount, currency, comment } = req.body;
   const employer_id = req.user.id;
+
+  // Normalize category from both type and category fields so demerits are always subtracted
+  const resolvedCategory = (() => {
+    const t = (type     || '').toLowerCase();
+    const c = (category || '').toLowerCase();
+    if (t === 'demerit' || c === 'demerit') return 'demerit';
+    if (t === 'advance' || c === 'advance') return 'advance';
+    if (t === 'merit'   || c === 'merit')   return 'merit';
+    return 'bonus';
+  })();
+
   try {
     const id = uuidv4();
+    // Always store demerits/advances as positive — the formula subtracts them
+    const storedAmount = Math.abs(Number(amount));
     await query(`
       INSERT INTO wage_bonuses (id, employee_id, employer_id, type, category, amount, currency, comment, created_at)
       VALUES (@id, @employee_id, @employer_id, @type, @category, @amount, @currency, @comment, GETUTCDATE())
     `, {
       id, employee_id, employer_id,
-      type: type || null,
-      category: category || 'bonus',
-      amount,
+      type: resolvedCategory,
+      category: resolvedCategory,
+      amount: storedAmount,
       currency: currency || 'USD',
       comment: comment || null,
     });
