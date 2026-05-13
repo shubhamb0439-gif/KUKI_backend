@@ -219,33 +219,31 @@ router.post('/', authenticate, async (req, res) => {
     let resolvedMetadata = metadata ? { ...metadata } : {};
 
     // Auto-create loan record when employer generates a loan QR
-    // so wage_loans is always populated even if frontend skips POST /wages/loans
     if ((transaction_type || '').toLowerCase() === 'loan' && employee_id && amount) {
       const loanId = uuidv4();
       const loanAmount = Number(amount) || 0;
-      const tenureMonths = resolvedMetadata.tenure_months || null;
+      const tenureMonths = resolvedMetadata.tenure_months ? Number(resolvedMetadata.tenure_months) : null;
       const monthlyDeduction = resolvedMetadata.monthly_deduction
-        || (tenureMonths ? Math.ceil(loanAmount / tenureMonths) : loanAmount);
+        ? Number(resolvedMetadata.monthly_deduction)
+        : (tenureMonths ? Math.ceil(loanAmount / tenureMonths) : loanAmount);
 
-      await query(`
-        INSERT INTO wage_loans
-          (id, employee_id, employer_id, amount, monthly_deduction, tenure_months,
-           remaining_amount, currency, status, paid_amount, created_at)
-        VALUES
-          (@id, @employee_id, @employer_id, @amount, @monthly_deduction, @tenure_months,
-           @amount, ISNULL(@currency, 'INR'), 'active', 0, GETUTCDATE())
-      `, {
-        id: loanId,
-        employee_id,
-        employer_id: req.user.id,
-        amount: loanAmount,
-        monthly_deduction: monthlyDeduction,
-        tenure_months: tenureMonths,
-        currency: resolvedMetadata.currency || null,
-      });
-
-      // Update loan_deductions in employee_wages
       try {
+        // Only insert columns guaranteed to exist — no updated_at, no interest_rate
+        await query(`
+          INSERT INTO wage_loans
+            (id, employee_id, employer_id, amount, monthly_deduction, currency, status, created_at)
+          VALUES
+            (@id, @employee_id, @employer_id, @amount, @monthly_deduction, @currency, 'active', GETUTCDATE())
+        `, {
+          id: loanId,
+          employee_id,
+          employer_id: req.user.id,
+          amount: loanAmount,
+          monthly_deduction: monthlyDeduction,
+          currency: resolvedMetadata.currency || 'INR',
+        });
+
+        // Update loan_deductions in employee_wages
         await query(`
           UPDATE employee_wages
           SET loan_deductions = (
@@ -268,9 +266,13 @@ router.post('/', authenticate, async (req, res) => {
               updated_at = GETUTCDATE()
           WHERE employee_id = @employee_id AND employer_id = @employer_id
         `, { employee_id, employer_id: req.user.id });
-      } catch (_) {}
 
-      resolvedMetadata.loan_id = loanId;
+        resolvedMetadata.loan_id = loanId;
+        console.log(`Loan created: ${loanId} for employee ${employee_id} amount ${loanAmount}`);
+      } catch (loanErr) {
+        console.error('Loan auto-create failed:', loanErr.message);
+        // Still create the QR — just without a loan record
+      }
     }
 
     const id = uuidv4();

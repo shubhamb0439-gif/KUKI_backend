@@ -131,13 +131,18 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    const blobName = `${profileId}-${Date.now()}.jpg`;
+    const ext = (req.file.mimetype || 'image/jpeg').split('/')[1] || 'jpg';
+    const blobName = `${profileId}-${Date.now()}.${ext}`;
     const url = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
+    if (!url) throw new Error('Storage returned empty URL');
     await query(
       'UPDATE profiles SET profile_photo = @url, updated_at = GETUTCDATE() WHERE id = @id',
       { url, id: profileId }
     );
-    res.json({ profile_photo: url });
+    // Return full profile so frontend can update all state in one go
+    const updated = await query('SELECT * FROM profiles WHERE id = @id', { id: profileId });
+    const { password_hash, ...safe } = updated.recordset[0];
+    res.json({ ...safe, profile_photo: url });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Photo upload failed' });
