@@ -73,7 +73,12 @@ router.patch('/:id', authenticate, async (req, res) => {
   }
 
   const updates = Object.keys(bodyWithLimits)
-    .filter(k => allowed.includes(k))
+    .filter(k => {
+      if (!allowed.includes(k)) return false;
+      // Never null-out profile_photo via PATCH — use POST /:id/photo for that
+      if (k === 'profile_photo' && !bodyWithLimits[k]) return false;
+      return true;
+    })
     .map(k => `${k} = @${k}`)
     .join(', ');
 

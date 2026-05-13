@@ -167,6 +167,11 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
   } = req.body;
   try {
     const id = uuidv4();
+    // Calculate monthly_deduction if not provided: total_amount/tenure or full amount
+    const resolvedTotal = total_amount ?? amount;
+    const resolvedMonthlyDeduction = monthly_deduction
+      ?? (tenure_months && resolvedTotal ? Math.ceil(resolvedTotal / tenure_months) : resolvedTotal)
+      ?? 0;
     const result = await query(`
       INSERT INTO wage_loans (id, employee_id, employer_id, amount, interest_rate, total_amount,
         remaining_amount, monthly_deduction, currency, status, loan_date, paid_amount, tenure_months, created_at)
@@ -176,9 +181,9 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
     `, {
       id, employee_id, employer_id: req.user.id, amount,
       interest_rate: interest_rate ?? 0,
-      total_amount: total_amount ?? null,
-      remaining_amount: remaining_amount ?? null,
-      monthly_deduction: monthly_deduction ?? null,
+      total_amount: resolvedTotal ?? null,
+      remaining_amount: remaining_amount ?? resolvedTotal ?? null,
+      monthly_deduction: resolvedMonthlyDeduction,
       currency: currency || 'USD',
       status: status || 'active',
       loan_date: loan_date || null,

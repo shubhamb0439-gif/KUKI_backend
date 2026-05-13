@@ -20,7 +20,11 @@ async function uploadToBlob(blobName, buffer, contentType) {
   await blockBlob.upload(buffer, buffer.length, {
     blobHTTPHeaders: { blobContentType: contentType },
   });
-  return blockBlob.url;
+  // Return a proxied URL through our own API so images load even when
+  // the Azure Blob container has public access disabled
+  const containerName = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
+  const apiBase = (process.env.API_BASE_URL || '').replace(/\/$/, '');
+  return `${apiBase}/storage/${containerName}/${blobName}`;
 }
 
 async function deleteFromBlob(blobName) {
