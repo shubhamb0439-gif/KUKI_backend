@@ -26,9 +26,20 @@ router.get('/', authenticate, async (req, res) => {
     let result;
     if (req.user.role === 'employer' || req.user.role === 'admin') {
       result = await query(`
-        SELECT e.*, p.name, p.email, p.phone, p.profile_photo, p.profession, p.job_status
+        SELECT
+          e.id, e.user_id, e.employer_id, e.employment_type, e.wage_amount, e.wage_type,
+          e.status, e.start_date, e.end_date, e.created_at,
+          p.name, p.email, p.phone,
+          p.profile_photo AS photo_url,
+          p.profession, p.job_status,
+          ISNULL(ew.working_hours_per_day, 8)    AS working_hours_per_day,
+          ISNULL(ew.total_working_days,   22)    AS working_days_per_month,
+          ISNULL(ew.hourly_rate,          0)     AS hourly_rate,
+          ISNULL(ew.monthly_wage, e.wage_amount) AS monthly_wage,
+          ew.final_payable, ew.currency
         FROM employees e
         LEFT JOIN profiles p ON e.user_id = p.id
+        LEFT JOIN employee_wages ew ON e.id = ew.employee_id AND e.employer_id = ew.employer_id
         WHERE e.employer_id = @employer_id AND e.status = 'active'
         ORDER BY e.created_at DESC
       `, { employer_id: req.user.id });

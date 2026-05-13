@@ -7,126 +7,177 @@ const router = express.Router();
 
 // ─── QR TRANSACTIONS ─────────────────────────────────────────────────────────
 
-// POST /qr-transactions/process — scan and process any QR transaction type
-// Lookup tries both qr_code field AND id field so either can be encoded in the QR image.
-// Attendance QRs are REUSABLE (scan every day); loan/wage QRs are one-time.
+// POST /qr-transactions/process — employee scans any QR code
+// Employee identified from JWT. Attendance QRs are reusable; loan/wage QRs are one-time.
 router.post('/process', authenticate, async (req, res) => {
   const { qr_code } = req.body;
   if (!qr_code) return res.status(400).json({ error: 'qr_code is required' });
 
   try {
-    // Look up by qr_code value OR by transaction id — no status filter yet
+    // Lookup by qr_code field OR by transaction id
     const txResult = await query(
       `SELECT * FROM qr_transactions WHERE qr_code = @val OR id = @val`,
       { val: qr_code }
     );
-    if (!txResult.recordset.length) {
-      return res.status(404).json({ error: 'QR code not found' });
-    }
+    if (!txResult.recordset.length) return res.status(404).json({ error: 'Invalid QR code' });
 
     const tx = txResult.recordset[0];
     let metadata = {};
     try { metadata = tx.metadata ? JSON.parse(tx.metadata) : {}; } catch (_) {}
 
     const type = (tx.transaction_type || '').toLowerCase();
-    const isAttendance = type === 'attendance' || type === 'clock_in' || type === 'clock_out';
+    const isAttendance = type === 'attendance';
 
-    // Non-attendance QRs are one-time use
-    if (!isAttendance && tx.status === 'completed') {
-      return res.status(409).json({ error: 'QR code already used' });
+    // Non-attendance QRs are one-time
+    if (!isAttendance && tx.status !== 'pending') {
+      return res.status(409).json({ error: 'This QR has already been used' });
     }
 
+    // Find employee record — use employer_id from QR transaction to resolve correct employee
+    const employerIdFromTx = tx.employer_id || metadata.employer_id;
+    let empQ = `SELECT id, employer_id FROM employees WHERE user_id = @uid AND status = 'active'`;
+    const empP = { uid: req.user.id };
+    if (employerIdFromTx) { empQ += ' AND employer_id = @eid'; empP.eid = employerIdFromTx; }
+    empQ += ' ORDER BY created_at DESC';
+
+    const empResult = await query(empQ + ' OFFSET 0 ROWS FETCH NEXT 1 ROWS ONLY', empP);
+    if (!empResult.recordset.length) {
+      return res.status(404).json({ error: 'Employee record not found. Make sure you are linked to this employer.' });
+    }
+    const emp = empResult.recordset[0];
+    const employeeId = emp.id;
+    const resolvedEmployerId = emp.employer_id;
+
     let actionResult = {};
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
 
     if (isAttendance) {
-      // Check if employee already clocked in today without clocking out
-      const todayRecord = await query(`
-        SELECT id, clock_in, clock_out FROM attendance
-        WHERE employee_id = @emp_id AND CAST(date AS DATE) = CAST(GETUTCDATE() AS DATE)
-          AND clock_out IS NULL
-      `, { emp_id: tx.employee_id });
+      // Check today's attendance record
+      const todayAtt = await query(`
+        SELECT id,
+          ISNULL(login_time, clock_in) AS login_time,
+          ISNULL(logout_time, clock_out) AS logout_time
+        FROM attendance
+        WHERE employee_id = @emp_id
+          AND CAST(ISNULL(attendance_date, [date]) AS DATE) = @today
+          AND (employer_id = @eid OR employer_id IS NULL)
+      `, { emp_id: employeeId, today, eid: resolvedEmployerId });
 
-      if (todayRecord.recordset.length > 0) {
-        // Clock out
-        const rec = todayRecord.recordset[0];
-        await query(`
-          UPDATE attendance
-          SET clock_out = GETUTCDATE(),
-              hours_worked = DATEDIFF(MINUTE, clock_in, GETUTCDATE()) / 60.0,
-              updated_at = GETUTCDATE()
-          WHERE id = @id
-        `, { id: rec.id });
-        actionResult = { action: 'clock_out', attendance_id: rec.id };
-      } else {
+      if (!todayAtt.recordset.length) {
         // Clock in
-        const attendanceId = uuidv4();
+        const attId = uuidv4();
         await query(`
-          INSERT INTO attendance (id, employee_id, clock_in, date, location, qr_scan, created_at)
-          VALUES (@id, @emp_id, GETUTCDATE(), CAST(GETUTCDATE() AS DATE), @loc, 1, GETUTCDATE())
-        `, { id: attendanceId, emp_id: tx.employee_id, loc: metadata.location || null });
-        actionResult = { action: 'clock_in', attendance_id: attendanceId };
+          INSERT INTO attendance
+            (id, employee_id, employer_id, attendance_date, [date], login_time, clock_in, [status], qr_scan, created_at)
+          VALUES
+            (@id, @emp_id, @eid, @today, @today, GETUTCDATE(), GETUTCDATE(), 'present', 1, GETUTCDATE())
+        `, { id: attId, emp_id: employeeId, eid: resolvedEmployerId, today });
+        actionResult = { action: 'clock_in', attendance_id: attId };
+
+      } else {
+        const att = todayAtt.recordset[0];
+        if (att.login_time && att.logout_time) {
+          return res.status(409).json({ error: 'Attendance already completed for today' });
+        } else if (att.login_time) {
+          // Clock out
+          await query(`
+            UPDATE attendance SET
+              logout_time   = GETUTCDATE(),
+              clock_out     = GETUTCDATE(),
+              total_hours   = DATEDIFF(MINUTE, ISNULL(login_time, clock_in), GETUTCDATE()) / 60.0,
+              hours_worked  = DATEDIFF(MINUTE, ISNULL(login_time, clock_in), GETUTCDATE()) / 60.0,
+              updated_at    = GETUTCDATE()
+            WHERE id = @id
+          `, { id: att.id });
+          const hoursResult = await query(
+            `SELECT ISNULL(total_hours, hours_worked) AS hours FROM attendance WHERE id = @id`,
+            { id: att.id }
+          );
+          actionResult = {
+            action: 'clock_out',
+            attendance_id: att.id,
+            hours_worked: hoursResult.recordset[0]?.hours,
+          };
+        }
       }
-      // Keep attendance QR reusable — update scanned_at but keep status as-is
-      await query(
-        `UPDATE qr_transactions SET scanned_at = GETUTCDATE() WHERE id = @id`,
-        { id: tx.id }
-      );
+      // Keep attendance QR reusable — only update scanned_at
+      await query(`UPDATE qr_transactions SET scanned_at = GETUTCDATE() WHERE id = @id`, { id: tx.id });
 
     } else if (type === 'loan') {
       if (metadata.loan_id) {
-        await query(
-          `UPDATE wage_loans SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`,
-          { id: metadata.loan_id }
-        );
+        await query(`UPDATE wage_loans SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`, { id: metadata.loan_id });
+        const loanRow = await query(`SELECT amount, currency FROM wage_loans WHERE id = @id`, { id: metadata.loan_id });
+        const loan = loanRow.recordset[0] || {};
+        try {
+          await query(`
+            INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, message, created_at)
+            VALUES (@id, @emp_id, @user_id, @eid, 'loan', @amount, @message, GETUTCDATE())
+          `, {
+            id: uuidv4(), emp_id: employeeId, user_id: req.user.id,
+            eid: resolvedEmployerId, amount: loan.amount || 0,
+            message: `LOAN RECEIVED\nAmount: ${loan.amount || 0} ${loan.currency || 'USD'}`,
+          });
+        } catch (_) {}
       }
-      actionResult = { loan_id: metadata.loan_id || null };
       await query(
-        `UPDATE qr_transactions SET status = 'completed', scanned_at = GETUTCDATE() WHERE id = @id`,
+        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
+        { id: tx.id }
+      );
+      actionResult = { loan_id: metadata.loan_id || null };
+
+    } else if (type === 'wage_payment') {
+      const wageRow = await query(
+        `SELECT final_payable, currency FROM employee_wages WHERE employee_id = @emp_id AND employer_id = @eid`,
+        { emp_id: employeeId, eid: resolvedEmployerId }
+      );
+      const wage = wageRow.recordset[0] || {};
+      try {
+        await query(`
+          INSERT INTO wage_statements (id, employee_id, user_id, employer_id, type, amount, message, created_at)
+          VALUES (@id, @emp_id, @user_id, @eid, 'payment', @amount, @message, GETUTCDATE())
+        `, {
+          id: uuidv4(), emp_id: employeeId, user_id: req.user.id,
+          eid: resolvedEmployerId, amount: wage.final_payable || 0,
+          message: `WAGE PAYMENT RECEIVED\nAmount: ${wage.final_payable || 0} ${wage.currency || 'USD'}`,
+        });
+      } catch (_) {}
+      await query(
+        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
 
-    } else if (type === 'wages' || type === 'payment' || type === 'wage_payment') {
-      if (metadata.statement_id) {
-        await query(
-          `UPDATE wage_statements SET is_paid = 1, updated_at = GETUTCDATE() WHERE id = @id`,
-          { id: metadata.statement_id }
-        );
-      }
-      actionResult = { statement_id: metadata.statement_id || null };
-      await query(
-        `UPDATE qr_transactions SET status = 'completed', scanned_at = GETUTCDATE() WHERE id = @id`,
-        { id: tx.id }
-      );
     } else {
-      // Unknown type — just mark completed
       await query(
-        `UPDATE qr_transactions SET status = 'completed', scanned_at = GETUTCDATE() WHERE id = @id`,
+        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
     }
 
     res.json({ success: true, transaction_type: tx.transaction_type, ...actionResult });
   } catch (err) {
-    console.error(err);
+    console.error('QR process error:', err);
     res.status(500).json({ error: err.message || 'QR processing failed' });
   }
 });
 
-// POST /qr-transactions
+// POST /qr-transactions — employer creates a QR transaction
+// employer_id is read from JWT — do NOT pass it in the body
 router.post('/', authenticate, async (req, res) => {
   const { employee_id, transaction_type, amount, qr_code, status, metadata } = req.body;
   try {
     const id = uuidv4();
     const result = await query(`
-      INSERT INTO qr_transactions (id, employee_id, employer_id, transaction_type, amount, qr_code, status, metadata, created_at)
+      INSERT INTO qr_transactions
+        (id, employee_id, employer_id, transaction_type, amount, qr_code, status, metadata, created_at)
       OUTPUT INSERTED.*
-      VALUES (@id, @employee_id, @employer_id, @transaction_type, @amount, @qr_code, @status, @metadata, GETUTCDATE())
+      VALUES
+        (@id, @employee_id, @employer_id, @transaction_type, @amount, @qr_code, @status, @metadata, GETUTCDATE())
     `, {
       id,
-      employee_id,
+      employee_id: employee_id || null,
       employer_id: req.user.id,
       transaction_type: transaction_type || null,
-      amount,
+      amount: amount || 0,
       qr_code: qr_code || null,
       status: status || 'pending',
       metadata: metadata ? JSON.stringify(metadata) : null,
@@ -138,13 +189,16 @@ router.post('/', authenticate, async (req, res) => {
   }
 });
 
-// GET /qr-transactions?qr_code=...
+// GET /qr-transactions?qr_code=... — returns single object
 router.get('/', authenticate, async (req, res) => {
   const { qr_code } = req.query;
   if (!qr_code) return res.status(400).json({ error: 'qr_code is required' });
   try {
-    const result = await query(`SELECT * FROM qr_transactions WHERE qr_code = @qr_code`, { qr_code });
-    if (!result.recordset.length) return res.status(404).json({ error: 'Transaction not found' });
+    const result = await query(
+      `SELECT * FROM qr_transactions WHERE qr_code = @qr_code OR id = @qr_code`,
+      { qr_code }
+    );
+    if (!result.recordset.length) return res.status(404).json({ error: 'Not found' });
     res.json(result.recordset[0]);
   } catch (err) {
     console.error(err);
@@ -152,7 +206,7 @@ router.get('/', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /qr-transactions/:id — dynamic update, return updated row
+// PATCH /qr-transactions/:id
 router.patch('/:id', authenticate, async (req, res) => {
   const ALLOWED = ['transaction_type', 'amount', 'qr_code', 'status', 'metadata', 'scanned_at'];
   const keys = Object.keys(req.body).filter(k => ALLOWED.includes(k));

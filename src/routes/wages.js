@@ -163,16 +163,16 @@ router.get('/loans/:id', authenticate, async (req, res) => {
 router.post('/loans', authenticate, requireEmployer, async (req, res) => {
   const {
     employee_id, amount, interest_rate, total_amount, remaining_amount,
-    monthly_deduction, currency, status, loan_date, paid_amount,
+    monthly_deduction, currency, status, loan_date, paid_amount, tenure_months,
   } = req.body;
   try {
     const id = uuidv4();
     const result = await query(`
       INSERT INTO wage_loans (id, employee_id, employer_id, amount, interest_rate, total_amount,
-        remaining_amount, monthly_deduction, currency, status, loan_date, paid_amount, created_at)
+        remaining_amount, monthly_deduction, currency, status, loan_date, paid_amount, tenure_months, created_at)
       OUTPUT INSERTED.*
       VALUES (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
-        @remaining_amount, @monthly_deduction, @currency, @status, @loan_date, @paid_amount, GETUTCDATE())
+        @remaining_amount, @monthly_deduction, @currency, @status, @loan_date, @paid_amount, @tenure_months, GETUTCDATE())
     `, {
       id, employee_id, employer_id: req.user.id, amount,
       interest_rate: interest_rate ?? 0,
@@ -183,6 +183,7 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       status: status || 'active',
       loan_date: loan_date || null,
       paid_amount: paid_amount ?? 0,
+      tenure_months: tenure_months ?? null,
     });
     // Tell frontend whether employee has the app so it knows to skip QR flow
     const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: employee_id });
