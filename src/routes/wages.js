@@ -185,10 +185,14 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       paid_amount: paid_amount ?? 0,
       tenure_months: tenure_months ?? null,
     });
-    // Tell frontend whether employee has the app so it knows to skip QR flow
-    const empRow = await query('SELECT user_id FROM employees WHERE id = @id', { id: employee_id });
+    // employee_has_app = true only if employee has a real account (password_hash set)
+    // Manually added employees have no password_hash so skip QR and grant directly
+    const empRow = await query(
+      'SELECT p.password_hash FROM employees e LEFT JOIN profiles p ON e.user_id = p.id WHERE e.id = @id',
+      { id: employee_id }
+    );
     const loan = result.recordset[0];
-    res.status(201).json({ ...loan, employee_has_app: !!(empRow.recordset[0]?.user_id) });
+    res.status(201).json({ ...loan, employee_has_app: !!(empRow.recordset[0]?.password_hash) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Failed to create loan' });

@@ -18,7 +18,8 @@ const PLAN_LIMITS = {
   enterprise:   { max_employees: 12, can_track_attendance: 1, can_access_full_statements: 1 },
 };
 
-const PROFILE_COLS = `id, name, email, phone, role, ads_enabled, subscription_plan, subscription_status,
+const PROFILE_COLS = `id, name, email, phone, role, profile_photo, profession, job_status,
+  ads_enabled, subscription_plan, subscription_status,
   subscription_expires_at, trial_ends_at, trial_used, trial_started_at, account_tier,
   max_employees, can_track_attendance, can_access_full_statements, created_at`;
 

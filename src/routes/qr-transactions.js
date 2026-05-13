@@ -150,7 +150,7 @@ router.post('/process', authenticate, async (req, res) => {
         } catch (_) {}
       }
       await query(
-        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
+        `UPDATE qr_transactions SET status = 'processed', scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
       actionResult = { loan_id: metadata.loan_id || null };
@@ -172,13 +172,13 @@ router.post('/process', authenticate, async (req, res) => {
         });
       } catch (_) {}
       await query(
-        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
+        `UPDATE qr_transactions SET status = 'processed', scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
 
     } else {
       await query(
-        `UPDATE qr_transactions SET status = 'processed', processed_at = GETUTCDATE(), scanned_at = GETUTCDATE() WHERE id = @id`,
+        `UPDATE qr_transactions SET status = 'processed', scanned_at = GETUTCDATE() WHERE id = @id`,
         { id: tx.id }
       );
     }
