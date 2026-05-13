@@ -8,11 +8,26 @@ const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 function normalizePhotoUrl(url) {
-  if (!url || url.startsWith('http')) return url;
-  const account = process.env.AZURE_STORAGE_ACCOUNT || 'kukistorageprod';
+  if (!url) return url;
+  const apiBase = process.env.API_BASE_URL;
   const container = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
-  const blobName = url.replace(/^\/storage\/[^/]+\//, '');
-  return `https://${account}.blob.core.windows.net/${container}/${blobName}`;
+  const account = process.env.AZURE_STORAGE_ACCOUNT || 'kukistorageprod';
+
+  let blobName = null;
+  if (url.startsWith('/storage/')) {
+    blobName = url.replace(/^\/storage\/[^/]+\//, '');
+  } else if (url.includes('.blob.core.windows.net/')) {
+    const match = url.match(/\.blob\.core\.windows\.net\/[^/]+\/(.+)/);
+    if (match) blobName = match[1];
+  }
+
+  if (!blobName) return url; // Already a proxied URL or unknown format
+
+  if (apiBase) {
+    return `${apiBase.replace(/\/$/, '')}/storage/${container}/${blobName}`;
+  }
+  // API_BASE_URL not set — keep direct Azure URL (enable public access in Azure Portal if needed)
+  return url.startsWith('http') ? url : `https://${account}.blob.core.windows.net/${container}/${blobName}`;
 }
 
 // Max employees and feature flags per plan

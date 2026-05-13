@@ -169,30 +169,28 @@ router.post('/process', authenticate, async (req, res) => {
       console.log(`Loan created at scan: ${createdLoanId} emp=${loanEmployeeId} amount=${loanAmount}`);
 
       // Update loan_deductions in employee_wages
-      try {
-        await query(`
-          UPDATE employee_wages
-          SET loan_deductions = (
-                SELECT ISNULL(SUM(monthly_deduction), 0)
-                FROM wage_loans
-                WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-              ),
-              final_payable = CASE
-                WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
-                        SELECT ISNULL(SUM(monthly_deduction), 0)
-                        FROM wage_loans
-                        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-                      )) < 0 THEN 0
-                ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
-                       SELECT ISNULL(SUM(monthly_deduction), 0)
-                       FROM wage_loans
-                       WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-                     )
-              END,
-              updated_at = GETUTCDATE()
-          WHERE employee_id = @employee_id AND employer_id = @employer_id
-        `, { employee_id: loanEmployeeId, employer_id: loanEmployerId });
-      } catch (_) {}
+      await query(`
+        UPDATE employee_wages
+        SET loan_deductions = (
+              SELECT ISNULL(SUM(monthly_deduction), 0)
+              FROM wage_loans
+              WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+            ),
+            final_payable = CASE
+              WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                      SELECT ISNULL(SUM(monthly_deduction), 0)
+                      FROM wage_loans
+                      WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                    )) < 0 THEN 0
+              ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                     SELECT ISNULL(SUM(monthly_deduction), 0)
+                     FROM wage_loans
+                     WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                   )
+            END,
+            updated_at = GETUTCDATE()
+        WHERE employee_id = @employee_id AND employer_id = @employer_id
+      `, { employee_id: loanEmployeeId, employer_id: loanEmployerId });
 
       // Wage statement
       try {
