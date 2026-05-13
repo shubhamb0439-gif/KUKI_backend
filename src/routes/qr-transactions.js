@@ -50,34 +50,64 @@ router.post('/process', authenticate, async (req, res) => {
 
     let actionResult = {};
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    // For regularization QRs, metadata.attendance_date targets a specific past date
+    const isRegularization = !!(metadata.attendance_date);
+    const targetDate = metadata.attendance_date || today;
 
     if (isAttendance) {
-      // Check today's attendance record
+      // Check attendance record for the target date
       const todayAtt = await query(`
         SELECT id,
           ISNULL(login_time, clock_in) AS login_time,
           ISNULL(logout_time, clock_out) AS logout_time
         FROM attendance
         WHERE employee_id = @emp_id
-          AND CAST(ISNULL(attendance_date, [date]) AS DATE) = @today
-          AND (employer_id = @eid OR employer_id IS NULL)
-      `, { emp_id: employeeId, today, eid: resolvedEmployerId });
+          AND CAST(ISNULL(attendance_date, [date]) AS DATE) = @targetDate
+          AND employer_id = @eid
+      `, { emp_id: employeeId, targetDate, eid: resolvedEmployerId });
 
       if (!todayAtt.recordset.length) {
-        // Clock in
+        // Clock in (or regularize: insert with the specific date)
         const attId = uuidv4();
-        await query(`
-          INSERT INTO attendance
-            (id, employee_id, employer_id, attendance_date, [date], login_time, clock_in, [status], qr_scan, created_at)
-          VALUES
-            (@id, @emp_id, @eid, @today, @today, GETUTCDATE(), GETUTCDATE(), 'present', 1, GETUTCDATE())
-        `, { id: attId, emp_id: employeeId, eid: resolvedEmployerId, today });
-        actionResult = { action: 'clock_in', attendance_id: attId };
+        if (isRegularization) {
+          // Regularization insert: set login_time to start of that day (midnight UTC as placeholder)
+          await query(`
+            INSERT INTO attendance
+              (id, employee_id, employer_id, attendance_date, [date], login_time, clock_in, logout_time, clock_out,
+               total_hours, hours_worked, [status], qr_scan, is_manual, created_at)
+            VALUES
+              (@id, @emp_id, @eid, @targetDate, @targetDate,
+               CAST(@targetDate AS DATETIME), CAST(@targetDate AS DATETIME),
+               CAST(@targetDate AS DATETIME), CAST(@targetDate AS DATETIME),
+               8, 8, 'present', 1, 1, GETUTCDATE())
+          `, { id: attId, emp_id: employeeId, eid: resolvedEmployerId, targetDate });
+          actionResult = { action: 'regularized', attendance_id: attId, date: targetDate };
+        } else {
+          await query(`
+            INSERT INTO attendance
+              (id, employee_id, employer_id, attendance_date, [date], login_time, clock_in, [status], qr_scan, created_at)
+            VALUES
+              (@id, @emp_id, @eid, @today, @today, GETUTCDATE(), GETUTCDATE(), 'present', 1, GETUTCDATE())
+          `, { id: attId, emp_id: employeeId, eid: resolvedEmployerId, today });
+          actionResult = { action: 'clock_in', attendance_id: attId };
+        }
 
       } else {
         const att = todayAtt.recordset[0];
         if (att.login_time && att.logout_time) {
-          return res.status(409).json({ error: 'Attendance already completed for today' });
+          if (isRegularization) {
+            // Regularization on a complete record — overwrite to mark as regularized
+            await query(`
+              UPDATE attendance SET
+                [status]    = 'present',
+                is_manual   = 1,
+                updated_at  = GETUTCDATE()
+              WHERE id = @id
+            `, { id: att.id });
+            actionResult = { action: 'regularized', attendance_id: att.id, date: targetDate };
+          } else {
+            return res.status(409).json({ error: 'Attendance already completed for today' });
+          }
         } else if (att.login_time) {
           // Clock out
           await query(`
@@ -105,7 +135,7 @@ router.post('/process', authenticate, async (req, res) => {
 
     } else if (type === 'loan') {
       if (metadata.loan_id) {
-        await query(`UPDATE wage_loans SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`, { id: metadata.loan_id });
+        await query(`UPDATE wage_loans SET status = 'active' WHERE id = @id`, { id: metadata.loan_id });
         const loanRow = await query(`SELECT amount, currency FROM wage_loans WHERE id = @id`, { id: metadata.loan_id });
         const loan = loanRow.recordset[0] || {};
         try {
