@@ -7,15 +7,34 @@ const router = express.Router();
 
 // ─── WAGES ───────────────────────────────────────────────────────────────────
 
-// GET /wages — returns employee_wages configuration records
+// GET /wages — returns employee_wages with live loan totals from wage_loans
 router.get('/', authenticate, async (req, res) => {
   const { employee_id } = req.query;
   try {
     let q = `
-      SELECT ew.*, p.name AS employee_name, e.user_id AS employee_user_id
+      SELECT
+        ew.*,
+        p.name              AS employee_name,
+        p.profile_photo     AS employee_photo,
+        e.user_id           AS employee_user_id,
+        ISNULL(ln.total_loan_amount,   0) AS total_loan_amount,
+        ISNULL(ln.total_loan_balance,  0) AS total_loan_balance,
+        ISNULL(ln.total_monthly_deduction, 0) AS total_monthly_deduction,
+        ln.active_loan_count
       FROM employee_wages ew
       JOIN employees e ON ew.employee_id = e.id
       LEFT JOIN profiles p ON e.user_id = p.id
+      OUTER APPLY (
+        SELECT
+          SUM(amount)             AS total_loan_amount,
+          SUM(ISNULL(remaining_amount, amount - ISNULL(paid_amount,0))) AS total_loan_balance,
+          SUM(monthly_deduction)  AS total_monthly_deduction,
+          COUNT(*)                AS active_loan_count
+        FROM wage_loans
+        WHERE employee_id = ew.employee_id
+          AND employer_id = ew.employer_id
+          AND status = 'active'
+      ) ln
       WHERE 1=1
     `;
     const params = {};
@@ -190,23 +209,44 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       paid_amount: paid_amount ?? 0,
       tenure_months: tenure_months ?? null,
     });
-    // Auto-update loan_deductions + final_payable in employee_wages
-    await query(`
-      UPDATE ew
-      SET loan_deductions = ISNULL(ld.total_monthly, 0),
-          final_payable = CASE
-            WHEN (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0)) < 0
-              THEN 0
-              ELSE (ew.monthly_wage + ISNULL(ew.merits,0) - ISNULL(ew.demerits,0) - ISNULL(ew.advances,0) - ISNULL(ld.total_monthly,0))
-          END
-      FROM employee_wages ew
-      CROSS APPLY (
-        SELECT ISNULL(SUM(monthly_deduction), 0) AS total_monthly
-        FROM wage_loans
-        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
-      ) ld
-      WHERE ew.employee_id = @employee_id AND ew.employer_id = @employer_id
-    `, { employee_id, employer_id: req.user.id });
+    // Ensure employee_wages row exists, then update loan_deductions
+    const ewCheck = await query(
+      'SELECT id FROM employee_wages WHERE employee_id = @employee_id AND employer_id = @employer_id',
+      { employee_id, employer_id: req.user.id }
+    );
+    if (!ewCheck.recordset.length) {
+      await query(`
+        INSERT INTO employee_wages
+          (id, employee_id, employer_id, monthly_wage, merits, demerits, advances,
+           loan_deductions, final_payable, currency, created_at, updated_at)
+        VALUES
+          (NEWID(), @employee_id, @employer_id, 0, 0, 0, 0,
+           @monthly_deduction, 0, 'INR', GETUTCDATE(), GETUTCDATE())
+      `, { employee_id, employer_id: req.user.id, monthly_deduction: resolvedMonthlyDeduction });
+    } else {
+      await query(`
+        UPDATE employee_wages
+        SET loan_deductions = (
+              SELECT ISNULL(SUM(monthly_deduction), 0)
+              FROM wage_loans
+              WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+            ),
+            final_payable = CASE
+              WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                      SELECT ISNULL(SUM(monthly_deduction), 0)
+                      FROM wage_loans
+                      WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                    )) < 0 THEN 0
+              ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                     SELECT ISNULL(SUM(monthly_deduction), 0)
+                     FROM wage_loans
+                     WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                   )
+            END,
+            updated_at = GETUTCDATE()
+        WHERE employee_id = @employee_id AND employer_id = @employer_id
+      `, { employee_id, employer_id: req.user.id });
+    }
 
     // employee_has_app = true only if employee has a real account (password_hash set)
     // Manually added employees have no password_hash so skip QR and grant directly

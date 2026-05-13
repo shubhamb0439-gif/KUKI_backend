@@ -216,6 +216,63 @@ router.post('/process', authenticate, async (req, res) => {
 router.post('/', authenticate, async (req, res) => {
   const { employee_id, transaction_type, amount, qr_code, status, metadata } = req.body;
   try {
+    let resolvedMetadata = metadata ? { ...metadata } : {};
+
+    // Auto-create loan record when employer generates a loan QR
+    // so wage_loans is always populated even if frontend skips POST /wages/loans
+    if ((transaction_type || '').toLowerCase() === 'loan' && employee_id && amount) {
+      const loanId = uuidv4();
+      const loanAmount = Number(amount) || 0;
+      const tenureMonths = resolvedMetadata.tenure_months || null;
+      const monthlyDeduction = resolvedMetadata.monthly_deduction
+        || (tenureMonths ? Math.ceil(loanAmount / tenureMonths) : loanAmount);
+
+      await query(`
+        INSERT INTO wage_loans
+          (id, employee_id, employer_id, amount, monthly_deduction, tenure_months,
+           remaining_amount, currency, status, paid_amount, created_at)
+        VALUES
+          (@id, @employee_id, @employer_id, @amount, @monthly_deduction, @tenure_months,
+           @amount, ISNULL(@currency, 'INR'), 'active', 0, GETUTCDATE())
+      `, {
+        id: loanId,
+        employee_id,
+        employer_id: req.user.id,
+        amount: loanAmount,
+        monthly_deduction: monthlyDeduction,
+        tenure_months: tenureMonths,
+        currency: resolvedMetadata.currency || null,
+      });
+
+      // Update loan_deductions in employee_wages
+      try {
+        await query(`
+          UPDATE employee_wages
+          SET loan_deductions = (
+                SELECT ISNULL(SUM(monthly_deduction), 0)
+                FROM wage_loans
+                WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+              ),
+              final_payable = CASE
+                WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                        SELECT ISNULL(SUM(monthly_deduction), 0)
+                        FROM wage_loans
+                        WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                      )) < 0 THEN 0
+                ELSE monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - (
+                       SELECT ISNULL(SUM(monthly_deduction), 0)
+                       FROM wage_loans
+                       WHERE employee_id = @employee_id AND employer_id = @employer_id AND status = 'active'
+                     )
+              END,
+              updated_at = GETUTCDATE()
+          WHERE employee_id = @employee_id AND employer_id = @employer_id
+        `, { employee_id, employer_id: req.user.id });
+      } catch (_) {}
+
+      resolvedMetadata.loan_id = loanId;
+    }
+
     const id = uuidv4();
     const result = await query(`
       INSERT INTO qr_transactions
@@ -231,7 +288,7 @@ router.post('/', authenticate, async (req, res) => {
       amount: amount || 0,
       qr_code: qr_code || null,
       status: status || 'pending',
-      metadata: metadata ? JSON.stringify(metadata) : null,
+      metadata: Object.keys(resolvedMetadata).length ? JSON.stringify(resolvedMetadata) : null,
     });
     res.status(201).json(result.recordset[0]);
   } catch (err) {
