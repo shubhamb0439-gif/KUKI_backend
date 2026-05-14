@@ -30,13 +30,14 @@ router.get('/', authenticate, async (req, res) => {
           e.id, e.user_id, e.employer_id, e.employment_type, e.wage_amount, e.wage_type,
           e.status, e.start_date, e.end_date, e.created_at,
           p.name, p.email, p.phone,
-          p.profile_photo AS photo_url,
+          ISNULL(p.profile_photo, e.photo) AS photo_url,
           p.profession, p.job_status,
           ISNULL(ew.working_hours_per_day, 8)    AS working_hours_per_day,
           ISNULL(ew.total_working_days,   22)    AS working_days_per_month,
           ISNULL(ew.hourly_rate,          0)     AS hourly_rate,
           ISNULL(ew.monthly_wage, e.wage_amount) AS monthly_wage,
-          ew.final_payable, ew.currency
+          ew.final_payable, ew.currency,
+          CASE WHEN p.password_hash IS NOT NULL THEN 1 ELSE 0 END AS employee_has_app
         FROM employees e
         LEFT JOIN profiles p ON e.user_id = p.id
         LEFT JOIN employee_wages ew ON e.id = ew.employee_id AND e.employer_id = ew.employer_id
