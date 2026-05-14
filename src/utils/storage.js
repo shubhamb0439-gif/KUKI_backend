@@ -8,24 +8,22 @@ function getBlobClient() {
 
 async function uploadToBlob(blobName, buffer, contentType) {
   const client = getBlobClient();
-  const container = client.getContainerClient(process.env.AZURE_STORAGE_CONTAINER || 'profile-photos');
-  // createIfNotExists with access:'blob' throws on accounts where public blob access is disabled.
-  // Swallow the error — if the container already exists we can still upload fine.
-  try {
-    await container.createIfNotExists({ access: 'blob' });
-  } catch (_) {
-    await container.createIfNotExists();
+  const containerName = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
+  const container = client.getContainerClient(containerName);
+
+  try { await container.createIfNotExists(); } catch (e) {
+    console.log('Container createIfNotExists skipped:', e.code || e.message);
   }
+
   const blockBlob = container.getBlockBlobClient(blobName);
-  await blockBlob.upload(buffer, buffer.length, {
+  console.log(`Uploading to Azure: ${containerName}/${blobName} (${buffer.length} bytes, ${contentType})`);
+  await blockBlob.uploadData(buffer, {
     blobHTTPHeaders: { blobContentType: contentType },
   });
-  // If API_BASE_URL is set, return a proxied URL through our own backend
-  // (works even when Azure Blob container has public access disabled).
-  // Otherwise fall back to the direct Azure blob URL.
+  console.log(`Azure upload success: ${blockBlob.url}`);
+
   const apiBase = process.env.API_BASE_URL;
   if (apiBase) {
-    const containerName = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
     return `${apiBase.replace(/\/$/, '')}/storage/${containerName}/${blobName}`;
   }
   return blockBlob.url;
