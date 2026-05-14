@@ -154,9 +154,9 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
       const empCheck = await query('SELECT user_id FROM employees WHERE id = @id', { id: req.params.id });
       if (!empCheck.recordset.length) return res.status(404).json({ error: 'Profile not found' });
       if (!empCheck.recordset[0].user_id) {
-        // Manually added employee with no user account — store photo directly on employees table
+        // Manually added employee with no user account — upload to Azure, store on employees table
         const ext = (req.file.mimetype || 'image/jpeg').split('/')[1] || 'jpg';
-        const blobName = `${req.params.id}-${Date.now()}.${ext}`;
+        const blobName = `emp-${req.params.id}-${Date.now()}.${ext}`;
         const photoUrl = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
         await query('UPDATE employees SET photo = @url WHERE id = @id', { url: photoUrl, id: req.params.id });
         return res.json({ employee_id: req.params.id, profile_photo: normalizePhotoUrl(photoUrl) });
