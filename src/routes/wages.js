@@ -15,7 +15,7 @@ router.get('/', authenticate, async (req, res) => {
       SELECT
         ew.*,
         p.name              AS employee_name,
-        p.profile_photo     AS employee_photo,
+        ISNULL(p.profile_photo, e.photo) AS employee_photo,
         e.user_id           AS employee_user_id,
         ISNULL(ln.total_loan_amount,   0) AS total_loan_amount,
         ISNULL(ln.total_loan_balance,  0) AS total_loan_balance,
@@ -451,8 +451,11 @@ router.post('/statements', authenticate, async (req, res) => {
     let resolvedUserId = user_id || null;
     let resolvedEmployerId = req.user.id;
 
-    // Employee generating their own statement
-    if (req.user.role !== 'employer' && req.user.role !== 'admin') {
+    if (req.user.role === 'employer' || req.user.role === 'admin') {
+      // Employer generating statement — statement belongs to employer, not employee
+      resolvedUserId = req.user.id;
+    } else {
+      // Employee generating their own statement
       const empRecord = await query(
         `SELECT TOP 1 id, employer_id FROM employees WHERE user_id = @uid AND status = 'active' ORDER BY created_at DESC`,
         { uid: req.user.id }
