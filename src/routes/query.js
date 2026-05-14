@@ -39,31 +39,37 @@ router.get('/:table', authenticate, async (req, res) => {
       if (SKIP_KEYS.has(key)) return;
       if (key.startsWith('filter_')) {
         const col = key.replace('filter_', '');
+        if (col.includes('.')) return; // skip relational filters (e.g. job_postings.status)
         const paramName = `p${paramIndex++}`;
         conditions.push(`[${col}] = @${paramName}`);
         params[paramName] = value;
       } else if (key.startsWith('gte_')) {
         const col = key.replace('gte_', '');
+        if (col.includes('.')) return;
         const paramName = `p${paramIndex++}`;
         conditions.push(`[${col}] >= @${paramName}`);
         params[paramName] = value;
       } else if (key.startsWith('lte_')) {
         const col = key.replace('lte_', '');
+        if (col.includes('.')) return;
         const paramName = `p${paramIndex++}`;
         conditions.push(`[${col}] <= @${paramName}`);
         params[paramName] = value;
       } else if (key.startsWith('neq_')) {
         const col = key.replace('neq_', '');
+        if (col.includes('.')) return;
         const paramName = `p${paramIndex++}`;
         conditions.push(`[${col}] != @${paramName}`);
         params[paramName] = value;
       } else if (key.startsWith('ilike_')) {
         const col = key.replace('ilike_', '');
+        if (col.includes('.')) return;
         const paramName = `p${paramIndex++}`;
         conditions.push(`[${col}] LIKE @${paramName}`);
         params[paramName] = value.replace(/%/g, '%');
       } else if (key.startsWith('in_')) {
         const col = key.replace('in_', '');
+        if (col.includes('.')) return;
         const vals = String(value).split(',');
         const inParams = vals.map((v, i) => {
           const pn = `p${paramIndex++}`;
