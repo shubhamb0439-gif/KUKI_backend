@@ -103,9 +103,13 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     await query(`
       UPDATE employee_wages
       SET final_payable = CASE
-        WHEN (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - ISNULL(loan_deductions,0)) < 0
+        WHEN (CAST(ISNULL(monthly_wage,0) AS DECIMAL(18,2)) + CAST(ISNULL(merits,0) AS DECIMAL(18,2))
+              - CAST(ISNULL(demerits,0) AS DECIMAL(18,2)) - CAST(ISNULL(advances,0) AS DECIMAL(18,2))
+              - CAST(ISNULL(loan_deductions,0) AS DECIMAL(18,2))) < 0
           THEN 0
-          ELSE (monthly_wage + ISNULL(merits,0) - ISNULL(demerits,0) - ISNULL(advances,0) - ISNULL(loan_deductions,0))
+          ELSE (CAST(ISNULL(monthly_wage,0) AS DECIMAL(18,2)) + CAST(ISNULL(merits,0) AS DECIMAL(18,2))
+                - CAST(ISNULL(demerits,0) AS DECIMAL(18,2)) - CAST(ISNULL(advances,0) AS DECIMAL(18,2))
+                - CAST(ISNULL(loan_deductions,0) AS DECIMAL(18,2)))
       END
       WHERE employee_id = @employee_id AND employer_id = @employer_id
     `, { employee_id, employer_id });
