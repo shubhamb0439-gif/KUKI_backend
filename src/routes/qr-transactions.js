@@ -267,7 +267,7 @@ router.post('/', authenticate, async (req, res) => {
       employer_id: req.user.id,
       transaction_type: transaction_type || null,
       amount: amount || 0,
-      qr_code: qr_code || null,
+      qr_code: qr_code || id,
       status: status || 'pending',
       metadata: Object.keys(resolvedMetadata).length ? JSON.stringify(resolvedMetadata) : null,
     });
