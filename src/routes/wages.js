@@ -66,16 +66,16 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
         ON target.employee_id = source.employee_id AND target.employer_id = source.employer_id
       WHEN MATCHED THEN
         UPDATE SET
-          monthly_wage       = ISNULL(@monthly_wage, monthly_wage),
+          monthly_wage       = ISNULL(CAST(@monthly_wage AS DECIMAL(18,2)), monthly_wage),
           currency           = ISNULL(@currency, currency),
-          hourly_rate        = ISNULL(@hourly_rate, hourly_rate),
-          working_hours_per_day = ISNULL(@working_hours_per_day, working_hours_per_day),
-          total_working_days = ISNULL(@total_working_days, total_working_days),
-          actual_hours_worked= ISNULL(@actual_hours_worked, actual_hours_worked),
-          merits             = ISNULL(@merits, merits),
-          demerits           = ISNULL(@demerits, demerits),
-          advances           = ISNULL(@advances, advances),
-          loan_deductions    = ISNULL(@loan_deductions, loan_deductions),
+          hourly_rate        = ISNULL(CAST(@hourly_rate AS DECIMAL(18,2)), hourly_rate),
+          working_hours_per_day = ISNULL(CAST(@working_hours_per_day AS DECIMAL(18,2)), working_hours_per_day),
+          total_working_days = ISNULL(CAST(@total_working_days AS DECIMAL(18,2)), total_working_days),
+          actual_hours_worked= ISNULL(CAST(@actual_hours_worked AS DECIMAL(18,2)), actual_hours_worked),
+          merits             = ISNULL(CAST(@merits AS DECIMAL(18,2)), merits),
+          demerits           = ISNULL(CAST(@demerits AS DECIMAL(18,2)), demerits),
+          advances           = ISNULL(CAST(@advances AS DECIMAL(18,2)), advances),
+          loan_deductions    = ISNULL(CAST(@loan_deductions AS DECIMAL(18,2)), loan_deductions),
           updated_at         = GETUTCDATE()
       WHEN NOT MATCHED THEN
         INSERT (id, employee_id, employer_id, monthly_wage, currency, hourly_rate,
