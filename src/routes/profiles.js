@@ -97,6 +97,7 @@ router.patch('/:id', authenticate, upload.single('photo'), async (req, res) => {
       'subscription_plan', 'subscription_status',
       'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
       'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
+      'currency',
     ];
 
     // Auto-apply plan limits when subscription_plan changes
@@ -115,7 +116,12 @@ router.patch('/:id', authenticate, upload.single('photo'), async (req, res) => {
       .map(k => `${k} = @${k}`)
       .join(', ');
 
-    if (!updates) return res.status(400).json({ error: 'No valid fields to update' });
+    if (!updates) {
+      // No recognised fields sent — return current profile unchanged rather than erroring
+      const current = await query('SELECT * FROM profiles WHERE id = @id', { id: req.params.id });
+      const { password_hash, ...safe } = current.recordset[0];
+      return res.json({ ...safe, profile_photo: normalizePhotoUrl(safe.profile_photo) });
+    }
 
     await query(
       `UPDATE profiles SET ${updates}, updated_at = GETUTCDATE() WHERE id = @id`,
