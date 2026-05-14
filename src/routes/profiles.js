@@ -171,7 +171,7 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
     let isEmployerOfTarget = false;
     if (!isOwnPhoto && !isAdmin && req.user.role === 'employer') {
       const emp = await query(
-        `SELECT id FROM employees WHERE user_id = @uid AND employer_id = @eid AND status = 'active'`,
+        `SELECT id FROM employees WHERE user_id = @uid AND employer_id = @eid`,
         { uid: profileId, eid: req.user.id }
       );
       isEmployerOfTarget = emp.recordset.length > 0;
