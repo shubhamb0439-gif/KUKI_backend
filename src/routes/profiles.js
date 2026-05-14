@@ -75,41 +75,48 @@ router.get('/:id', authenticate, async (req, res) => {
   }
 });
 
-// PATCH /profiles/:id
-router.patch('/:id', authenticate, async (req, res) => {
+// PATCH /profiles/:id — accepts JSON body OR multipart/form-data (with optional photo file)
+router.patch('/:id', authenticate, upload.single('photo'), async (req, res) => {
   if (req.params.id.toLowerCase() !== req.user.id.toLowerCase() && req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied' });
   }
 
-  // Only columns confirmed to exist in the profiles table
-  const allowed = [
-    'name', 'phone', 'email', 'profession', 'job_status',
-    'account_type', 'account_tier', 'ads_enabled', 'profile_photo',
-    'subscription_plan', 'subscription_status',
-    'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
-    'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
-  ];
-
-  // Auto-apply plan limits when subscription_plan changes
-  let bodyWithLimits = { ...req.body };
-  if (req.body.subscription_plan) {
-    const limits = PLAN_LIMITS[(req.body.subscription_plan || '').toLowerCase()];
-    if (limits) Object.assign(bodyWithLimits, limits);
-  }
-
-  const updates = Object.keys(bodyWithLimits)
-    .filter(k => {
-      if (!allowed.includes(k)) return false;
-      // Never null-out profile_photo via PATCH — use POST /:id/photo for that
-      if (k === 'profile_photo' && !bodyWithLimits[k]) return false;
-      return true;
-    })
-    .map(k => `${k} = @${k}`)
-    .join(', ');
-
-  if (!updates) return res.status(400).json({ error: 'No valid fields to update' });
-
   try {
+    // If a photo file was uploaded, push it to Azure and inject the URL into the update body
+    if (req.file) {
+      const ext = (req.file.mimetype || 'image/jpeg').split('/')[1] || 'jpg';
+      const blobName = `${req.params.id}-${Date.now()}.${ext}`;
+      const photoUrl = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
+      req.body.profile_photo = photoUrl;
+    }
+
+    // Only columns confirmed to exist in the profiles table
+    const allowed = [
+      'name', 'phone', 'email', 'profession', 'job_status',
+      'account_type', 'account_tier', 'ads_enabled', 'profile_photo',
+      'subscription_plan', 'subscription_status',
+      'subscription_expires_at', 'trial_ends_at', 'trial_used', 'trial_started_at',
+      'max_employees', 'can_track_attendance', 'can_access_full_statements', 'payment_method_added',
+    ];
+
+    // Auto-apply plan limits when subscription_plan changes
+    let bodyWithLimits = { ...req.body };
+    if (req.body.subscription_plan) {
+      const limits = PLAN_LIMITS[(req.body.subscription_plan || '').toLowerCase()];
+      if (limits) Object.assign(bodyWithLimits, limits);
+    }
+
+    const updates = Object.keys(bodyWithLimits)
+      .filter(k => {
+        if (!allowed.includes(k)) return false;
+        if (k === 'profile_photo' && !bodyWithLimits[k]) return false;
+        return true;
+      })
+      .map(k => `${k} = @${k}`)
+      .join(', ');
+
+    if (!updates) return res.status(400).json({ error: 'No valid fields to update' });
+
     await query(
       `UPDATE profiles SET ${updates}, updated_at = GETUTCDATE() WHERE id = @id`,
       { ...bodyWithLimits, id: req.params.id }
@@ -123,7 +130,7 @@ router.patch('/:id', authenticate, async (req, res) => {
       const col = err.message.match(/'([^']+)'/)?.[1] || 'unknown';
       return res.status(400).json({ error: `Field '${col}' is not supported in profile updates` });
     }
-    res.status(500).json({ error: 'Failed to update profile' });
+    res.status(500).json({ error: err.message || 'Failed to update profile' });
   }
 });
 
