@@ -185,17 +185,35 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
     const blobName = `${profileId}-${Date.now()}.${ext}`;
     const url = await uploadToBlob(blobName, req.file.buffer, req.file.mimetype);
     if (!url) throw new Error('Storage returned empty URL');
-    await query(
-      'UPDATE profiles SET profile_photo = @url, updated_at = GETUTCDATE() WHERE id = @id',
-      { url, id: profileId }
-    );
-    // Return full profile so frontend can update all state in one go
+
+    const normalizedUrl = normalizePhotoUrl(url);
+
+    // Save to profiles.profile_photo
+    try {
+      await query(
+        'UPDATE profiles SET profile_photo = @url WHERE id = @id',
+        { url: normalizedUrl, id: profileId }
+      );
+      console.log(`profile_photo saved for profileId=${profileId}`);
+    } catch (updateErr) {
+      console.error('Failed to update profiles.profile_photo:', updateErr.message);
+      throw updateErr;
+    }
+
+    // Also save to employees.photo so ISNULL fallbacks work
+    try {
+      await query(
+        `UPDATE employees SET photo = @url WHERE user_id = @pid OR id = @rid`,
+        { url: normalizedUrl, pid: profileId, rid: req.params.id }
+      );
+    } catch (_) {}
+
     const updated = await query('SELECT * FROM profiles WHERE id = @id', { id: profileId });
     const { password_hash, ...safe } = updated.recordset[0];
-    res.json({ ...safe, profile_photo: normalizePhotoUrl(url) });
+    res.json({ ...safe, profile_photo: normalizedUrl });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Photo upload failed' });
+    console.error('POST /photo error:', err.message);
+    res.status(500).json({ error: err.message || 'Photo upload failed' });
   }
 });
 
