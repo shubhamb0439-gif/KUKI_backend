@@ -189,16 +189,11 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
     const normalizedUrl = normalizePhotoUrl(url);
 
     // Save to profiles.profile_photo
-    try {
-      await query(
-        'UPDATE profiles SET profile_photo = @url WHERE id = @id',
-        { url: normalizedUrl, id: profileId }
-      );
-      console.log(`profile_photo saved for profileId=${profileId}`);
-    } catch (updateErr) {
-      console.error('Failed to update profiles.profile_photo:', updateErr.message);
-      throw updateErr;
-    }
+    const updateResult = await query(
+      'UPDATE profiles SET profile_photo = @url WHERE id = @id',
+      { url: normalizedUrl, id: profileId }
+    );
+    const rowsAffected = updateResult.rowsAffected[0];
 
     // Also save to employees.photo so ISNULL fallbacks work
     try {
@@ -209,8 +204,12 @@ router.post('/:id/photo', authenticate, upload.single('photo'), async (req, res)
     } catch (_) {}
 
     const updated = await query('SELECT * FROM profiles WHERE id = @id', { id: profileId });
-    const { password_hash, ...safe } = updated.recordset[0];
-    res.json({ ...safe, profile_photo: normalizedUrl });
+    const row = updated.recordset[0];
+    if (!row) {
+      return res.json({ profile_photo: normalizedUrl, _debug: { profileId, rowsAffected, warning: 'profile row not found after update' } });
+    }
+    const { password_hash, ...safe } = row;
+    res.json({ ...safe, profile_photo: normalizedUrl, _debug: { profileId, rowsAffected } });
   } catch (err) {
     console.error('POST /photo error:', err.message);
     res.status(500).json({ error: err.message || 'Photo upload failed' });
