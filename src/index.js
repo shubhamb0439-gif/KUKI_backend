@@ -14,6 +14,7 @@ const qrTransactionRoutes = require('./routes/qr-transactions');
 const queryRoutes = require('./routes/query');
 const rpcRoutes = require('./routes/rpc');
 const storageRoutes = require('./routes/storage');
+const emailRoutes = require('./routes/emails');
 
 const app = express();
 
@@ -56,6 +57,7 @@ app.use('/qr-transactions', qrTransactionRoutes);
 app.use('/query', queryRoutes);
 app.use('/rpc', rpcRoutes);
 app.use('/storage', storageRoutes);
+app.use('/emails', emailRoutes);
 
 // Health check (Azure App Service uses this)
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));

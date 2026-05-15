@@ -1,9 +1,11 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const { query, sql } = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { sendEmail } = require('../utils/email');
 
 const router = express.Router();
 
@@ -167,6 +169,78 @@ router.post('/logout', authenticate, async (req, res) => {
   // JWT is stateless — actual logout is handled on frontend by deleting the token
   // Optionally log the logout event here
   res.json({ success: true });
+});
+
+// POST /auth/forgot-password
+router.post('/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email is required' });
+
+  try {
+    const result = await query('SELECT id FROM profiles WHERE email = @email', { email });
+
+    // Always return 200 — don't reveal if email exists
+    if (result.recordset.length === 0) {
+      return res.json({ message: 'If an account exists, a reset email has been sent' });
+    }
+
+    const userId = result.recordset[0].id;
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await query(`
+      INSERT INTO password_reset_tokens (token, user_id, expires_at, used, created_at)
+      VALUES (@token, @user_id, @expires_at, 0, GETUTCDATE())
+    `, { token, user_id: userId, expires_at: expiresAt });
+
+    const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+    const resetLink = `${frontendUrl}/#/reset-password?token=${token}`;
+
+    await sendEmail({
+      to: email,
+      subject: 'Reset your KUKI password',
+      text: `You requested a password reset. Click the link below to reset your password:\n\n${resetLink}\n\nThis link expires in 1 hour. If you did not request this, ignore this email.`,
+      html: `
+        <h2>Reset your KUKI password</h2>
+        <p>You requested a password reset. Click the button below to reset your password:</p>
+        <a href="${resetLink}" style="display:inline-block;padding:12px 24px;background:#4F46E5;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;">Reset Password</a>
+        <p style="margin-top:16px;color:#666;">This link expires in 1 hour. If you did not request this, ignore this email.</p>
+      `,
+    });
+
+    res.json({ message: 'If an account exists, a reset email has been sent' });
+  } catch (err) {
+    console.error('Forgot password error:', err.message);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// POST /auth/reset-password
+router.post('/reset-password', async (req, res) => {
+  const { token, new_password } = req.body;
+  if (!token || !new_password) return res.status(400).json({ error: 'Token and new_password are required' });
+
+  try {
+    const result = await query(
+      `SELECT * FROM password_reset_tokens WHERE token = @token AND used = 0 AND expires_at > GETUTCDATE()`,
+      { token }
+    );
+
+    if (!result.recordset.length) {
+      return res.status(400).json({ error: 'Invalid or expired reset token' });
+    }
+
+    const { user_id } = result.recordset[0];
+    const hashedPassword = await bcrypt.hash(new_password, 12);
+
+    await query('UPDATE profiles SET password_hash = @hash WHERE id = @id', { hash: hashedPassword, id: user_id });
+    await query('UPDATE password_reset_tokens SET used = 1 WHERE token = @token', { token });
+
+    res.json({ message: 'Password reset successful' });
+  } catch (err) {
+    console.error('Reset password error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
 });
 
 module.exports = router;
