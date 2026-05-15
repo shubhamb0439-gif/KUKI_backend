@@ -39,8 +39,10 @@ router.post('/signup', async (req, res) => {
     const userId = uuidv4();
 
     await query(`
-      INSERT INTO profiles (id, email, phone, name, role, password_hash, account_type, created_at)
-      VALUES (@id, @email, @phone, @name, @role, @password_hash, 'normal', GETUTCDATE())
+      INSERT INTO profiles (id, email, phone, name, role, password_hash, account_type,
+        max_employees, subscription_plan, created_at)
+      VALUES (@id, @email, @phone, @name, @role, @password_hash, 'normal',
+        @max_employees, @subscription_plan, GETUTCDATE())
     `, {
       id: userId,
       email: email || null,
@@ -48,6 +50,8 @@ router.post('/signup', async (req, res) => {
       name,
       role,
       password_hash: hashedPassword,
+      max_employees: role === 'employer' ? 1 : null,
+      subscription_plan: role === 'employer' ? 'free' : null,
     });
 
     // Re-fetch from DB so the id is in the same format (uppercase UNIQUEIDENTIFIER) as login
