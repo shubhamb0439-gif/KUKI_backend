@@ -97,11 +97,28 @@ router.post('/manual', authenticate, async (req, res) => {
     attendance_date, date: bodyDate,
     status, login_time, logout_time, clock_in, clock_out, notes,
   } = req.body;
+
+  const VALID_STATUSES = ['present', 'absent', 'leave', 'sick_leave'];
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(', ')}` });
+  }
+
   try {
     let empId = bodyEmpId;
     let empEmployerId = employer_id || req.user.id;
 
-    if (req.user.role !== 'employer' && req.user.role !== 'admin') {
+    if (req.user.role === 'employer' || req.user.role === 'admin') {
+      // Employer marking attendance for an employee — verify ownership
+      if (!empId) return res.status(400).json({ error: 'employee_id is required' });
+      const empCheck = await query(
+        `SELECT id FROM employees WHERE id = @empId AND employer_id = @eid`,
+        { empId, eid: req.user.id }
+      );
+      if (!empCheck.recordset.length) {
+        return res.status(403).json({ error: 'Employee not found or does not belong to you' });
+      }
+      empEmployerId = req.user.id;
+    } else {
       // Employee self-report: find their employee record
       const empQ = employer_id
         ? `SELECT TOP 1 id, employer_id FROM employees WHERE user_id = @uid AND employer_id = @eid AND status = 'active'`
@@ -124,7 +141,10 @@ router.post('/manual', authenticate, async (req, res) => {
         AND CAST(ISNULL(attendance_date, [date]) AS DATE) = @att_date
     `, { emp_id: empId, att_date: attDate });
 
+    let recordId;
+
     if (existing.recordset.length > 0) {
+      recordId = existing.recordset[0].id;
       await query(`
         UPDATE attendance SET
           [status]     = ISNULL(@status, [status]),
@@ -140,9 +160,9 @@ router.post('/manual', authenticate, async (req, res) => {
           is_manual    = 1,
           updated_at   = GETUTCDATE()
         WHERE id = @id
-      `, { id: existing.recordset[0].id, status: status || null, loginT, logoutT, notes: notes || null });
+      `, { id: recordId, status: status || null, loginT, logoutT, notes: notes || null });
     } else {
-      const id = uuidv4();
+      recordId = uuidv4();
       await query(`
         INSERT INTO attendance
           (id, employee_id, employer_id, attendance_date, [date], login_time, logout_time,
@@ -155,10 +175,22 @@ router.post('/manual', authenticate, async (req, res) => {
            CASE WHEN @loginT IS NOT NULL AND @logoutT IS NOT NULL
                 THEN DATEDIFF(MINUTE, @loginT, @logoutT) / 60.0 ELSE NULL END,
            GETUTCDATE())
-      `, { id, emp_id: empId, eid: empEmployerId, attDate, loginT, logoutT, status: status || 'present', notes: notes || null });
+      `, { id: recordId, emp_id: empId, eid: empEmployerId, attDate, loginT, logoutT, status: status || 'present', notes: notes || null });
     }
 
-    res.json({ success: true });
+    const record = await query(`
+      SELECT
+        a.id, a.employee_id, a.employer_id,
+        CONVERT(VARCHAR(10), ISNULL(a.attendance_date, a.[date]), 120) AS attendance_date,
+        ISNULL(a.login_time,  a.clock_in)     AS login_time,
+        ISNULL(a.logout_time, a.clock_out)    AS logout_time,
+        ISNULL(a.total_hours, a.hours_worked) AS total_hours,
+        ISNULL(a.[status], 'present')         AS [status],
+        a.is_manual, a.notes, a.created_at
+      FROM attendance a WHERE a.id = @id
+    `, { id: recordId });
+
+    res.json({ message: 'Attendance marked successfully', data: record.recordset[0] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message || 'Manual entry failed' });
