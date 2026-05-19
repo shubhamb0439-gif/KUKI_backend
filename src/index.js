@@ -15,6 +15,7 @@ const queryRoutes = require('./routes/query');
 const rpcRoutes = require('./routes/rpc');
 const storageRoutes = require('./routes/storage');
 const emailRoutes = require('./routes/emails');
+const ratingsRoutes = require('./routes/ratings');
 
 const app = express();
 
@@ -58,6 +59,7 @@ app.use('/query', queryRoutes);
 app.use('/rpc', rpcRoutes);
 app.use('/storage', storageRoutes);
 app.use('/emails', emailRoutes);
+app.use('/ratings', ratingsRoutes);
 
 // Health check (Azure App Service uses this)
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
