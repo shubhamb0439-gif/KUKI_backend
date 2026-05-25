@@ -7,7 +7,7 @@ function getClient() {
 }
 
 async function sendEmail({ to, subject, text, html }) {
-  await getClient().beginSend({
+  const poller = await getClient().beginSend({
     senderAddress: process.env.AZURE_COMMUNICATION_FROM_EMAIL || 'donotreply@kuki-app.com',
     recipients: { to: [{ address: to }] },
     content: {
@@ -16,6 +16,7 @@ async function sendEmail({ to, subject, text, html }) {
       html: html || `<p>${text}</p>`,
     },
   });
+  await poller.pollUntilDone();
 }
 
 module.exports = { sendEmail };
