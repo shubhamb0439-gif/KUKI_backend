@@ -1,11 +1,21 @@
-const sgMail = require('@sendgrid/mail');
+const { EmailClient } = require('@azure/communication-email');
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-const FROM_EMAIL = process.env.SENDGRID_FROM_EMAIL;
+let client;
+function getClient() {
+  if (!client) client = new EmailClient(process.env.AZURE_COMMUNICATION_CONNECTION_STRING);
+  return client;
+}
 
 async function sendEmail({ to, subject, text, html }) {
-  await sgMail.send({ from: FROM_EMAIL, to, subject, text, html: html || `<p>${text}</p>` });
+  await getClient().beginSend({
+    senderAddress: process.env.AZURE_COMMUNICATION_FROM_EMAIL || 'donotreply@kuki-app.com',
+    recipients: { to: [{ address: to }] },
+    content: {
+      subject,
+      plainText: text,
+      html: html || `<p>${text}</p>`,
+    },
+  });
 }
 
 module.exports = { sendEmail };
