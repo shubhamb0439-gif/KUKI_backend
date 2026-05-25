@@ -6,9 +6,9 @@ function getBlobClient() {
   return BlobServiceClient.fromConnectionString(connectionString);
 }
 
-async function uploadToBlob(blobName, buffer, contentType) {
+async function uploadToBlob(blobName, buffer, contentType, containerName) {
   const client = getBlobClient();
-  const containerName = process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
+  containerName = containerName || process.env.AZURE_STORAGE_CONTAINER || 'profile-photos';
   const container = client.getContainerClient(containerName);
 
   try { await container.createIfNotExists(); } catch (e) {

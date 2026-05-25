@@ -456,8 +456,8 @@ router.post('/statements', authenticate, async (req, res) => {
     let resolvedEmployerId = req.user.id;
 
     if (req.user.role === 'employer' || req.user.role === 'admin') {
-      // Employer generating statement — statement belongs to employer, not employee
-      resolvedUserId = req.user.id;
+      // Admin can override user_id to route the statement to the correct recipient
+      resolvedUserId = (req.user.role === 'admin' && user_id) ? user_id : req.user.id;
     } else {
       // Employee generating their own statement
       const empRecord = await query(

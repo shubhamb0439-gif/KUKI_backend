@@ -125,8 +125,9 @@ router.patch('/ads/:id', authenticate, requireAdmin, async (req, res) => {
 
 router.delete('/ads/:id', authenticate, requireAdmin, async (req, res) => {
   try {
+    await query("DELETE FROM ad_impressions WHERE ad_id = @id", { id: req.params.id });
     await query("DELETE FROM advertisements WHERE id = @id", { id: req.params.id });
-    res.json({ success: true });
+    res.status(204).send();
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete ad' });
   }
