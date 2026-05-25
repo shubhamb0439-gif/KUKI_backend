@@ -197,7 +197,7 @@ router.post('/forgot-password', async (req, res) => {
       VALUES (@token, @user_id, @expires_at, 0, GETUTCDATE())
     `, { token, user_id: userId, expires_at: expiresAt });
 
-    const frontendUrl = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
+    const frontendUrl = (process.env.FRONTEND_URL || 'https://wonderful-coast-0dc3fda00.7.azurestaticapps.net').replace(/\/$/, '');
     const resetLink = `${frontendUrl}/#/reset-password?token=${token}`;
 
     await sendEmail({

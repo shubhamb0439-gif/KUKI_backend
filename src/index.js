@@ -18,6 +18,7 @@ const emailRoutes = require('./routes/emails');
 const ratingsRoutes = require('./routes/ratings');
 
 const app = express();
+app.set('trust proxy', 1); // Azure App Service sits behind a reverse proxy
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 const allowedOrigins = [
