@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { resolveViewAs } = require('../utils/accountLink');
 
 const router = express.Router();
 
@@ -30,12 +31,20 @@ router.get('/', authenticate, async (req, res) => {
     `;
     const params = {};
 
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+    const viewAs = req.query.view_as;
+    let effectiveId = req.user.id;
+    if (viewAs) {
+      const resolved = await resolveViewAs(req, viewAs);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      effectiveId = resolved.effectiveId;
+    }
+
+    if (req.user.role === 'employer' || req.user.role === 'admin' || viewAs) {
       q += ' AND e.employer_id = @employer_id';
-      params.employer_id = req.user.id;
+      params.employer_id = effectiveId;
     } else {
       q += ' AND e.user_id = @user_id';
-      params.user_id = req.user.id;
+      params.user_id = effectiveId;
     }
 
     if (employee_id) { q += ' AND a.employee_id = @employee_id'; params.employee_id = employee_id; }
@@ -95,7 +104,7 @@ router.post('/manual', authenticate, async (req, res) => {
   const {
     employee_id: bodyEmpId, employer_id,
     attendance_date, date: bodyDate,
-    status, login_time, logout_time, clock_in, clock_out, notes,
+    status, login_time, logout_time, clock_in, clock_out, notes, view_as,
   } = req.body;
 
   const VALID_STATUSES = ['present', 'absent', 'leave', 'sick_leave'];
@@ -107,7 +116,13 @@ router.post('/manual', authenticate, async (req, res) => {
     let empId = bodyEmpId;
     let empEmployerId = employer_id || req.user.id;
 
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as, true);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      empEmployerId = resolved.effectiveId;
+    }
+
+    if (req.user.role === 'employer' || req.user.role === 'admin' || view_as) {
       // Employer marking attendance for an employee — verify ownership
       if (!empId) return res.status(400).json({ error: 'employee_id is required' });
       const empCheck = await query(

@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate, requireEmployer } = require('../middleware/auth');
+const { resolveViewAs } = require('../utils/accountLink');
 
 const router = express.Router();
 
@@ -9,8 +10,15 @@ const router = express.Router();
 
 // GET /wages — returns employee_wages with live loan totals from wage_loans
 router.get('/', authenticate, async (req, res) => {
-  const { employee_id } = req.query;
+  const { employee_id, view_as } = req.query;
   try {
+    let effectiveId = req.user.id;
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      effectiveId = resolved.effectiveId;
+    }
+
     let q = `
       SELECT
         ew.*,
@@ -38,8 +46,8 @@ router.get('/', authenticate, async (req, res) => {
       WHERE 1=1
     `;
     const params = {};
-    if (req.user.role === 'employer') { q += ' AND ew.employer_id = @employer_id'; params.employer_id = req.user.id; }
-    else { q += ' AND e.user_id = @user_id'; params.user_id = req.user.id; }
+    if (req.user.role === 'employer' || view_as) { q += ' AND ew.employer_id = @employer_id'; params.employer_id = effectiveId; }
+    else { q += ' AND e.user_id = @user_id'; params.user_id = effectiveId; }
     if (employee_id) { q += ' AND ew.employee_id = @employee_id'; params.employee_id = employee_id; }
 
     const result = await query(q, params);
@@ -55,9 +63,15 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
   const {
     employee_id, monthly_wage, currency,
     hourly_rate, working_hours_per_day, total_working_days,
-    actual_hours_worked, merits, demerits, advances, loan_deductions,
+    actual_hours_worked, merits, demerits, advances, loan_deductions, view_as,
   } = req.body;
-  const employer_id = req.user.id;
+
+  let employer_id = req.user.id;
+  if (view_as) {
+    const resolved = await resolveViewAs(req, view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    employer_id = resolved.effectiveId;
+  }
   const id = uuidv4();
   try {
     await query(`
@@ -144,21 +158,28 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 
 // GET /wages/loans
 router.get('/loans', authenticate, async (req, res) => {
-  const { employee_id } = req.query;
+  const { employee_id, view_as } = req.query;
   try {
+    let effectiveId = req.user.id;
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      effectiveId = resolved.effectiveId;
+    }
+
     let q, params = {};
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+    if (req.user.role === 'employer' || req.user.role === 'admin' || view_as) {
       q = `SELECT wl.*, p.name AS employee_name FROM wage_loans wl
            LEFT JOIN employees e ON wl.employee_id = e.id
            LEFT JOIN profiles p ON e.user_id = p.id
            WHERE wl.employer_id = @employer_id`;
-      params.employer_id = req.user.id;
+      params.employer_id = effectiveId;
     } else {
       q = `SELECT wl.*, p.name AS employer_name FROM wage_loans wl
            LEFT JOIN profiles p ON wl.employer_id = p.id
            JOIN employees e ON wl.employee_id = e.id
            WHERE e.user_id = @user_id`;
-      params.user_id = req.user.id;
+      params.user_id = effectiveId;
     }
     if (employee_id) { q += ' AND wl.employee_id = @employee_id'; params.employee_id = employee_id; }
     q += ' ORDER BY wl.created_at DESC';
@@ -186,8 +207,15 @@ router.get('/loans/:id', authenticate, async (req, res) => {
 router.post('/loans', authenticate, requireEmployer, async (req, res) => {
   const {
     employee_id, amount, interest_rate, total_amount, remaining_amount,
-    monthly_deduction, currency, status, loan_date, paid_amount, tenure_months,
+    monthly_deduction, currency, status, loan_date, paid_amount, tenure_months, view_as,
   } = req.body;
+
+  let effectiveEmployerId = req.user.id;
+  if (view_as) {
+    const resolved = await resolveViewAs(req, view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    effectiveEmployerId = resolved.effectiveId;
+  }
   try {
     const id = uuidv4();
     // Calculate monthly_deduction if not provided: total_amount/tenure or full amount
@@ -202,7 +230,7 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
       VALUES (@id, @employee_id, @employer_id, @amount, @interest_rate, @total_amount,
         @remaining_amount, @monthly_deduction, @currency, @status, @loan_date, @paid_amount, @tenure_months, GETUTCDATE())
     `, {
-      id, employee_id, employer_id: req.user.id, amount,
+      id, employee_id, employer_id: effectiveEmployerId, amount,
       interest_rate: interest_rate ?? 0,
       total_amount: resolvedTotal ?? null,
       remaining_amount: remaining_amount ?? resolvedTotal ?? null,
@@ -216,7 +244,7 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
     // Ensure employee_wages row exists, then update loan_deductions
     const ewCheck = await query(
       'SELECT id FROM employee_wages WHERE employee_id = @employee_id AND employer_id = @employer_id',
-      { employee_id, employer_id: req.user.id }
+      { employee_id, employer_id: effectiveEmployerId }
     );
     if (!ewCheck.recordset.length) {
       await query(`
@@ -226,7 +254,7 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
         VALUES
           (NEWID(), @employee_id, @employer_id, 0, 0, 0, 0,
            @monthly_deduction, 0, 'INR', GETUTCDATE(), GETUTCDATE())
-      `, { employee_id, employer_id: req.user.id, monthly_deduction: resolvedMonthlyDeduction });
+      `, { employee_id, employer_id: effectiveEmployerId, monthly_deduction: resolvedMonthlyDeduction });
     } else {
       await query(`
         UPDATE employee_wages
@@ -249,7 +277,7 @@ router.post('/loans', authenticate, requireEmployer, async (req, res) => {
             END,
             updated_at = GETUTCDATE()
         WHERE employee_id = @employee_id AND employer_id = @employer_id
-      `, { employee_id, employer_id: req.user.id });
+      `, { employee_id, employer_id: effectiveEmployerId });
     }
 
     // employee_has_app = true only if employee has a real account (password_hash set)
@@ -294,20 +322,27 @@ router.patch('/loans/:id', authenticate, requireEmployer, async (req, res) => {
 
 // GET /wages/bonuses
 router.get('/bonuses', authenticate, async (req, res) => {
-  const { employee_id } = req.query;
+  const { employee_id, view_as } = req.query;
   try {
+    let effectiveId = req.user.id;
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      effectiveId = resolved.effectiveId;
+    }
+
     let q, params = {};
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+    if (req.user.role === 'employer' || req.user.role === 'admin' || view_as) {
       q = `SELECT wb.*, p.name AS employee_name FROM wage_bonuses wb
            LEFT JOIN employees e ON wb.employee_id = e.id
            LEFT JOIN profiles p ON e.user_id = p.id
            WHERE wb.employer_id = @employer_id`;
-      params.employer_id = req.user.id;
+      params.employer_id = effectiveId;
     } else {
       q = `SELECT wb.* FROM wage_bonuses wb
            JOIN employees e ON wb.employee_id = e.id
            WHERE e.user_id = @user_id`;
-      params.user_id = req.user.id;
+      params.user_id = effectiveId;
     }
     if (employee_id) { q += ' AND wb.employee_id = @employee_id'; params.employee_id = employee_id; }
     q += ' ORDER BY wb.created_at DESC';
@@ -321,8 +356,14 @@ router.get('/bonuses', authenticate, async (req, res) => {
 
 // POST /wages/bonuses — insert and recalculate employee_wages.final_payable
 router.post('/bonuses', authenticate, requireEmployer, async (req, res) => {
-  const { employee_id, type, category, amount, currency, comment } = req.body;
-  const employer_id = req.user.id;
+  const { employee_id, type, category, amount, currency, comment, view_as } = req.body;
+
+  let employer_id = req.user.id;
+  if (view_as) {
+    const resolved = await resolveViewAs(req, view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    employer_id = resolved.effectiveId;
+  }
 
   // Normalize category from both type and category fields so demerits are always subtracted
   const resolvedCategory = (() => {
@@ -424,17 +465,23 @@ router.post('/contracts', authenticate, requireEmployer, async (req, res) => {
 
 // GET /wages/statements
 router.get('/statements', authenticate, async (req, res) => {
-  const { user_id, employee_id } = req.query;
+  const { user_id, employee_id, view_as } = req.query;
   try {
+    let effectiveId = req.user.id;
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      effectiveId = resolved.effectiveId;
+    }
+
     let q = `SELECT * FROM wage_statements WHERE 1=1`;
     const params = {};
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+    if (req.user.role === 'employer' || req.user.role === 'admin' || view_as) {
       q += ' AND employer_id = @employer_id';
-      params.employer_id = req.user.id;
+      params.employer_id = effectiveId;
     } else {
-      // Employee sees statements addressed to them
       q += ' AND user_id = @user_id';
-      params.user_id = req.user.id;
+      params.user_id = effectiveId;
     }
     if (user_id) { q += ' AND user_id = @uid'; params.uid = user_id; }
     if (employee_id) { q += ' AND employee_id = @employee_id'; params.employee_id = employee_id; }
@@ -449,15 +496,20 @@ router.get('/statements', authenticate, async (req, res) => {
 
 // POST /wages/statements — employer creates for employee, OR employee generates their own
 router.post('/statements', authenticate, async (req, res) => {
-  const { employee_id, user_id, type, amount, description, period_start, period_end, details, message } = req.body;
+  const { employee_id, user_id, type, amount, description, period_start, period_end, details, message, view_as } = req.body;
   try {
     let resolvedEmployeeId = employee_id || null;
     let resolvedUserId = user_id || null;
     let resolvedEmployerId = req.user.id;
 
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
-      // Admin can override user_id to route the statement to the correct recipient
-      resolvedUserId = (req.user.role === 'admin' && user_id) ? user_id : req.user.id;
+    if (view_as) {
+      const resolved = await resolveViewAs(req, view_as, true);
+      if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+      resolvedEmployerId = resolved.effectiveId;
+    }
+
+    if (req.user.role === 'employer' || req.user.role === 'admin' || view_as) {
+      resolvedUserId = (req.user.role === 'admin' && user_id) ? user_id : resolvedEmployerId;
     } else {
       // Employee generating their own statement
       const empRecord = await query(

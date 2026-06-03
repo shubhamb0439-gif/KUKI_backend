@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate, requireEmployer } = require('../middleware/auth');
+const { resolveViewAs } = require('../utils/accountLink');
 
 const router = express.Router();
 
@@ -23,8 +24,16 @@ function normalizeWageType(val) {
 // GET /employees - employer gets their employees, employee gets their own record
 router.get('/', authenticate, async (req, res) => {
   try {
+    const viewAs = req.query.view_as;
     let result;
-    if (req.user.role === 'employer' || req.user.role === 'admin') {
+
+    if (req.user.role === 'employer' || req.user.role === 'admin' || viewAs) {
+      let effectiveId = req.user.id;
+      if (viewAs) {
+        const resolved = await resolveViewAs(req, viewAs);
+        if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+        effectiveId = resolved.effectiveId;
+      }
       result = await query(`
         SELECT
           e.id, e.user_id, e.employer_id, e.employment_type, e.wage_amount, e.wage_type,
@@ -43,7 +52,7 @@ router.get('/', authenticate, async (req, res) => {
         LEFT JOIN employee_wages ew ON e.id = ew.employee_id AND e.employer_id = ew.employer_id
         WHERE e.employer_id = @employer_id AND e.status = 'active'
         ORDER BY e.created_at DESC
-      `, { employer_id: req.user.id });
+      `, { employer_id: effectiveId });
     } else {
       result = await query(`
         SELECT e.*, p.name AS employer_name
@@ -61,10 +70,17 @@ router.get('/', authenticate, async (req, res) => {
 
 // POST /employees - employer adds an employee
 router.post('/', authenticate, requireEmployer, async (req, res) => {
-  const { user_id, name, phone, email, employment_type, wage_amount, wage_type, start_date, profile_photo } = req.body;
+  const { user_id, name, phone, email, employment_type, wage_amount, wage_type, start_date, profile_photo, view_as } = req.body;
 
   if (!user_id && !name) {
     return res.status(400).json({ error: 'name is required when adding a new employee' });
+  }
+
+  let effectiveEmployerId = req.user.id;
+  if (view_as) {
+    const resolved = await resolveViewAs(req, view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    effectiveEmployerId = resolved.effectiveId;
   }
 
   try {
@@ -102,16 +118,14 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     // Check if this user is already linked to this employer (e.g. manual add + QR scan)
     const existing = await query(
       `SELECT id, status FROM employees WHERE user_id = @uid AND employer_id = @eid`,
-      { uid: employeeUserId, eid: req.user.id }
+      { uid: employeeUserId, eid: effectiveEmployerId }
     );
 
     if (existing.recordset.length > 0) {
       const emp = existing.recordset[0];
       if (emp.status === 'active') {
-        // Already linked and active — just return the existing record
         return res.status(200).json({ id: emp.id, user_id: employeeUserId, already_linked: true });
       }
-      // Was removed — reactivate instead of creating a duplicate
       await query(
         `UPDATE employees SET status = 'active', updated_at = GETUTCDATE() WHERE id = @id`,
         { id: emp.id }
@@ -126,7 +140,7 @@ router.post('/', authenticate, requireEmployer, async (req, res) => {
     `, {
       id: employeeId,
       user_id: employeeUserId,
-      employer_id: req.user.id,
+      employer_id: effectiveEmployerId,
       employment_type: normalizeEmploymentType(employment_type),
       wage_amount: wage_amount || 0,
       wage_type: normalizeWageType(wage_type),
@@ -200,10 +214,17 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 
   if (!updates) return res.status(400).json({ error: 'No valid fields' });
 
+  let effectiveEmployerId = req.user.id;
+  if (req.body.view_as) {
+    const resolved = await resolveViewAs(req, req.body.view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    effectiveEmployerId = resolved.effectiveId;
+  }
+
   try {
     await query(
       `UPDATE employees SET ${updates}, updated_at = GETUTCDATE() WHERE id = @id AND employer_id = @employer_id`,
-      { ...req.body, id: req.params.id, employer_id: req.user.id }
+      { ...req.body, id: req.params.id, employer_id: effectiveEmployerId }
     );
     res.json({ success: true });
   } catch (err) {
@@ -214,10 +235,17 @@ router.patch('/:id', authenticate, requireEmployer, async (req, res) => {
 
 // DELETE /employees/:id - deactivate (not hard delete)
 router.delete('/:id', authenticate, requireEmployer, async (req, res) => {
+  let effectiveEmployerId = req.user.id;
+  if (req.body.view_as) {
+    const resolved = await resolveViewAs(req, req.body.view_as, true);
+    if (resolved.error) return res.status(resolved.error.status).json({ error: resolved.error.message });
+    effectiveEmployerId = resolved.effectiveId;
+  }
+
   try {
     const result = await query(
       `UPDATE employees SET status = 'inactive', updated_at = GETUTCDATE() WHERE id = @id AND employer_id = @employer_id`,
-      { id: req.params.id, employer_id: req.user.id }
+      { id: req.params.id, employer_id: effectiveEmployerId }
     );
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Employee not found' });
     res.json({ success: true });

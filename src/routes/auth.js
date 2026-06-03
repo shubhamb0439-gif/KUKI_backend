@@ -160,7 +160,32 @@ router.get('/me', authenticate, async (req, res) => {
     if (result.recordset.length === 0) {
       return res.status(404).json({ error: 'Profile not found' });
     }
-    const { password_hash, ...safeProfile } = result.recordset[0];
+
+    let profile = result.recordset[0];
+
+    // Auto-expire trial if trial_ends_at has passed
+    if (profile.subscription_status === 'trial' && profile.trial_ends_at && new Date(profile.trial_ends_at) < new Date()) {
+      await query(`
+        UPDATE profiles SET
+          subscription_plan          = 'free',
+          subscription_status        = 'expired',
+          max_employees              = 1,
+          can_track_attendance       = 0,
+          can_access_full_statements = 0,
+          updated_at                 = GETUTCDATE()
+        WHERE id = @id
+      `, { id: profile.id });
+      profile = {
+        ...profile,
+        subscription_plan: 'free',
+        subscription_status: 'expired',
+        max_employees: 1,
+        can_track_attendance: 0,
+        can_access_full_statements: 0,
+      };
+    }
+
+    const { password_hash, ...safeProfile } = profile;
     res.json({ user: safeProfile });
   } catch (err) {
     console.error('Get me error:', err);

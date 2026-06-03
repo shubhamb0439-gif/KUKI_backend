@@ -16,6 +16,8 @@ const rpcRoutes = require('./routes/rpc');
 const storageRoutes = require('./routes/storage');
 const emailRoutes = require('./routes/emails');
 const ratingsRoutes = require('./routes/ratings');
+const paymentsRoutes = require('./routes/payments');
+const accountLinksRoutes = require('./routes/account-links');
 
 const app = express();
 app.set('trust proxy', 1); // Azure App Service sits behind a reverse proxy
@@ -61,6 +63,8 @@ app.use('/rpc', rpcRoutes);
 app.use('/storage', storageRoutes);
 app.use('/emails', emailRoutes);
 app.use('/ratings', ratingsRoutes);
+app.use('/payments', paymentsRoutes);
+app.use('/account-links', accountLinksRoutes);
 
 // Health check (Azure App Service uses this)
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date() }));
