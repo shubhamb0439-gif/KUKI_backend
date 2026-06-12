@@ -48,23 +48,22 @@ router.post('/pesawise/create-link', authenticate, async (req, res) => {
       reference,
     });
 
-    // Build signature: HMAC-SHA256 over merchantId + amount + currency + reference
-    const sigData = `${merchantId}${planConfig.amount}${planConfig.currency}${reference}`;
-    const signature = crypto.createHmac('sha256', secretKey).update(sigData).digest('hex');
+    // Build payload object
+    const payload = {
+      merchantId,
+      amount:      planConfig.amount,
+      currency:    planConfig.currency,
+      reference,
+      description: `KUKI ${planKey.replace(/_/g, ' ')} plan`,
+      callbackUrl: webhookUrl,
+      returnUrl,
+    };
 
-    // Construct paywall URL
-    const params = new URLSearchParams({
-      mid:      merchantId,
-      amount:   planConfig.amount,
-      currency: planConfig.currency,
-      ref:      reference,
-      desc:     `KUKI ${planKey.replace('_', ' ')} plan`,
-      cbu:      webhookUrl,
-      rtu:      returnUrl,
-      sig:      signature,
-    });
+    // Sign the base64-encoded payload
+    const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64');
+    const signature = crypto.createHmac('sha256', secretKey).update(payloadBase64).digest('hex');
 
-    const paymentUrl = `${paywallBase}?${params.toString()}`;
+    const paymentUrl = `${paywallBase}?payload=${encodeURIComponent(payloadBase64)}&sig=${signature}`;
     res.json({ payment_url: paymentUrl, reference });
   } catch (err) {
     console.error('Pesawise create-link error:', err);
