@@ -49,15 +49,18 @@ router.post('/pesawise/create-link', authenticate, async (req, res) => {
       reference,
     });
 
-    // Build Pesawise Paywall v4 signed URL (no pre-registration API needed)
-    // Signature: HMAC-SHA256 over merchantId + amount + currency + reference
-    const secretKey = process.env.PESAWISE_NOTIFICATION_SECRET_KEY || callerPass;
-    const sigData   = `${merchantId}${planConfig.amount}${planConfig.currency}${reference}`;
+    // Build Pesawise Paywall v4 signed URL
+    // Key: PESAWISE_SECRET_KEY from dashboard (falls back to notification key, then caller password)
+    // Signature: HMAC-SHA256 over merchantId|amount|currency|reference (pipe-delimited)
+    const secretKey = process.env.PESAWISE_SECRET_KEY
+                   || process.env.PESAWISE_NOTIFICATION_SECRET_KEY
+                   || callerPass;
+    const sigData   = [merchantId, planConfig.amount, planConfig.currency, reference].join('|');
     const sig       = crypto.createHmac('sha256', secretKey).update(sigData).digest('hex');
+    console.log('Pesawise sig input:', sigData, '| key starts with:', secretKey?.slice(0, 4));
 
     const params = new URLSearchParams({
       mid:         merchantId,
-      callerName,
       amount:      planConfig.amount,
       currency:    planConfig.currency,
       ref:         reference,
