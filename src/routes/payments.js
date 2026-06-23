@@ -1,36 +1,8 @@
 const express = require('express');
 const crypto = require('crypto');
-const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
-
-function pesawisePost(path, body) {
-  return new Promise((resolve, reject) => {
-    const data = JSON.stringify(body);
-    const apiBase = process.env.PESAWISE_API_BASE_URL || 'api.pesawise.xyz';
-    const options = {
-      hostname: apiBase.replace(/^https?:\/\//, ''),
-      path,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(data),
-      },
-    };
-    const req = https.request(options, (res) => {
-      let raw = '';
-      res.on('data', chunk => raw += chunk);
-      res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
-        catch { resolve({ status: res.statusCode, body: raw }); }
-      });
-    });
-    req.on('error', reject);
-    req.write(data);
-    req.end();
-  });
-}
 
 const router = express.Router();
 
@@ -77,28 +49,28 @@ router.post('/pesawise/create-link', authenticate, async (req, res) => {
       reference,
     });
 
-    // Step 1 — Register payment session with Pesawise API
-    const apiPayload = {
-      merchantId,
+    // Build Pesawise Paywall v4 signed URL (no pre-registration API needed)
+    // Signature: HMAC-SHA256 over merchantId + amount + currency + reference
+    const secretKey = process.env.PESAWISE_NOTIFICATION_SECRET_KEY || callerPass;
+    const sigData   = `${merchantId}${planConfig.amount}${planConfig.currency}${reference}`;
+    const sig       = crypto.createHmac('sha256', secretKey).update(sigData).digest('hex');
+
+    const params = new URLSearchParams({
+      mid:         merchantId,
       callerName,
-      callerPassword: callerPass,
-      amount:         planConfig.amount,
-      currency:       planConfig.currency,
-      reference,
-      description:    `KUKI ${planKey.replace(/_/g, ' ')} plan`,
-      callbackUrl:    webhookUrl,
+      amount:      planConfig.amount,
+      currency:    planConfig.currency,
+      ref:         reference,
+      desc:        `KUKI ${planKey.replace(/_/g, ' ')} plan`,
       returnUrl,
-    };
+      callbackUrl: webhookUrl,
+      sig,
+    });
 
-    console.log('Pesawise API request:', JSON.stringify(apiPayload));
-    const apiResponse = await pesawisePost('/api/v1/payment/initiate', apiPayload);
-    console.log('Pesawise API response:', JSON.stringify(apiResponse));
+    const paymentUrl = `${paywallBase}?${params.toString()}`;
+    console.log('Pesawise paywall URL:', paymentUrl);
 
-    // If API call succeeded, use the reference from Pesawise; otherwise fall back to direct paywall URL
-    const pesawiseRef = apiResponse.body?.reference || apiResponse.body?.ref || reference;
-    const paymentUrl = `${paywallBase}?ref=${pesawiseRef}`;
-
-    res.json({ payment_url: paymentUrl, reference: pesawiseRef });
+    res.json({ payment_url: paymentUrl, reference });
   } catch (err) {
     console.error('Pesawise create-link error:', err);
     res.status(500).json({ error: 'Failed to create payment link' });
