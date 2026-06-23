@@ -1,8 +1,36 @@
 const express = require('express');
 const crypto = require('crypto');
+const https = require('https');
 const { v4: uuidv4 } = require('uuid');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
+
+function pesawisePost(path, body) {
+  return new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const apiBase = process.env.PESAWISE_API_BASE_URL || 'api.pesawise.xyz';
+    const options = {
+      hostname: apiBase.replace(/^https?:\/\//, ''),
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(data),
+      },
+    };
+    const req = https.request(options, (res) => {
+      let raw = '';
+      res.on('data', chunk => raw += chunk);
+      res.on('end', () => {
+        try { resolve({ status: res.statusCode, body: JSON.parse(raw) }); }
+        catch { resolve({ status: res.statusCode, body: raw }); }
+      });
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
 
 const router = express.Router();
 
@@ -24,16 +52,17 @@ router.post('/pesawise/create-link', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Invalid plan. Must be core, pro, or pro_plus' });
   }
 
-  const merchantId  = process.env.PESAWISE_MERCHANT_ID;
-  const secretKey   = process.env.PESAWISE_PAYWALL_SECRET_KEY;
-  const paywallBase = process.env.PESAWISE_PAYWALL_BASE_URL || 'https://payment.pesawise.xyz/pwv4/launch';
-  const webhookUrl  = `${(process.env.API_BASE_URL || '').replace(/\/$/, '')}/payments/pesawise/webhook`;
-  const returnUrl   = `${(process.env.FRONTEND_URL || 'https://wonderful-coast-0dc3fda00.7.azurestaticapps.net').replace(/\/$/, '')}/#/payment-result`;
+  const merchantId   = process.env.PESAWISE_MERCHANT_ID;
+  const callerName   = process.env.PESAWISE_CALLER_NAME;
+  const callerPass   = process.env.PESAWISE_CALLER_PASSWORD;
+  const paywallBase  = process.env.PESAWISE_PAYWALL_BASE_URL || 'https://payment.pesawise.xyz/pwv4/launch';
+  const webhookUrl   = `${(process.env.API_BASE_URL || '').replace(/\/$/, '')}/payments/pesawise/webhook`;
+  const returnUrl    = `${(process.env.FRONTEND_URL || 'https://wonderful-coast-0dc3fda00.7.azurestaticapps.net').replace(/\/$/, '')}/#/payment-result`;
 
   const reference = uuidv4();
 
   try {
-    // Save pending transaction so webhook can resolve it back to a user + plan
+    // Save pending transaction
     await query(`
       INSERT INTO subscription_transactions
         (id, user_id, subscription_plan, amount, currency, status, reference, created_at)
@@ -48,23 +77,28 @@ router.post('/pesawise/create-link', authenticate, async (req, res) => {
       reference,
     });
 
-    // Build signature: HMAC-SHA256 over merchantId + amount + currency + reference
-    const sigData = `${merchantId}${planConfig.amount}${planConfig.currency}${reference}`;
-    const signature = crypto.createHmac('sha256', secretKey).update(sigData).digest('hex');
+    // Step 1 — Register payment session with Pesawise API
+    const apiPayload = {
+      merchantId,
+      callerName,
+      callerPassword: callerPass,
+      amount:         planConfig.amount,
+      currency:       planConfig.currency,
+      reference,
+      description:    `KUKI ${planKey.replace(/_/g, ' ')} plan`,
+      callbackUrl:    webhookUrl,
+      returnUrl,
+    };
 
-    const params = new URLSearchParams({
-      mid:      merchantId,
-      amount:   planConfig.amount,
-      currency: planConfig.currency,
-      ref:      reference,
-      desc:     `KUKI ${planKey.replace(/_/g, ' ')} plan`,
-      cbu:      webhookUrl,
-      rtu:      returnUrl,
-      sig:      signature,
-    });
+    console.log('Pesawise API request:', JSON.stringify(apiPayload));
+    const apiResponse = await pesawisePost('/api/v1/payment/initiate', apiPayload);
+    console.log('Pesawise API response:', JSON.stringify(apiResponse));
 
-    const paymentUrl = `${paywallBase}?${params.toString()}`;
-    res.json({ payment_url: paymentUrl, reference });
+    // If API call succeeded, use the reference from Pesawise; otherwise fall back to direct paywall URL
+    const pesawiseRef = apiResponse.body?.reference || apiResponse.body?.ref || reference;
+    const paymentUrl = `${paywallBase}?ref=${pesawiseRef}`;
+
+    res.json({ payment_url: paymentUrl, reference: pesawiseRef });
   } catch (err) {
     console.error('Pesawise create-link error:', err);
     res.status(500).json({ error: 'Failed to create payment link' });
